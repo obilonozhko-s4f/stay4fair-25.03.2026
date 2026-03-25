@@ -6,14 +6,19 @@ namespace StayFlow\Integration;
 
 use StayFlow\Settings\SettingsStore;
 
+// ==========================================================================
+// RU: Защита от прямого доступа
+// EN: Prevent direct access
+// ==========================================================================
 if (!defined('ABSPATH')) {
     exit;
 }
 
 /**
- * Version: 1.6.0
+ * Version: 1.6.1
  * RU: Шорткод [sf_owner_steps] для вывода 8 шагов-выжимок из AGB.
  * EN: Shortcode [sf_owner_steps] to display 8 workflow steps based on AGB.
+ * * [1.6.1]: Исправлена мобильная верстка (flex-direction: column внутри карточки).
  * * [1.6.0]: Исправлено получение комиссии — теперь данные берутся динамически из SettingsStore.
  */
 final class OwnerStepsShortcode
@@ -48,7 +53,7 @@ final class OwnerStepsShortcode
             [
                 'number' => '01',
                 'title'  => 'Registrierung & Portal',
-                'desc'   => 'Fülle das Formular aus und подтверди deine E-Mail, um sofort Zugang zum sicheren Owner-Portal zu erhalten. Dort kannst du direkt als Gastgeber loslegen.',
+                'desc'   => 'Fülle das Formular aus und bestätige deine E-Mail, um sofort Zugang zum sicheren Owner-Portal zu erhalten. Dort kannst du direkt als Gastgeber loslegen.',
                 'icon'   => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>'
             ],
             [
@@ -239,6 +244,10 @@ final class OwnerStepsShortcode
                 }
             }
 
+            /* ==========================================
+               RU: Адаптивность для мобильных устройств
+               EN: Mobile responsive adjustments
+               ========================================== */
             @media (max-width: 600px) {
                 .sf-steps-grid {
                     grid-template-columns: 1fr;
@@ -246,19 +255,19 @@ final class OwnerStepsShortcode
                 }
                 .sf-step-card { 
                     padding: 25px 20px; 
-                    flex-direction: row;
-                    align-items: center;
-                    gap: 15px;
+                    flex-direction: column; /* Изменено с row на column */
+                    align-items: flex-start; /* Изменено для выравнивания по левому краю */
+                    gap: 0;
                 }
                 .sf-step-icon {
-                    margin-bottom: 0;
-                    min-width: 50px;
+                    margin-bottom: 15px; /* Вернули отступ, который был 0 */
+                    min-width: auto;
                 }
                 .sf-step-number {
-                    top: 50%;
-                    transform: translateY(-50%);
-                    right: 10px;
-                    font-size: 48px;
+                    top: 15px;
+                    transform: none; /* Убрано смещение translateY(-50%) */
+                    right: 15px;
+                    font-size: 52px;
                 }
             }
         </style>
