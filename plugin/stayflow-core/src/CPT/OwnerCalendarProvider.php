@@ -4,21 +4,27 @@ declare(strict_types=1);
 
 namespace StayFlow\CPT;
 
+// ==========================================================================
+// RU: Защита от прямого доступа
+// EN: Prevent direct access
+// ==========================================================================
 if (!defined('ABSPATH')) {
     exit;
 }
 
 /**
- * Version: 2.3.1
+ * Version: 2.3.2
  * RU: Провайдер интерактивного календаря.
+ * - [FIX]: Мобильная адаптация: Индивидуальный календарь превращается в вертикальный список (List View).
+ * - [FIX]: Мобильная адаптация: Глобальный Timeline (Gantt) компактизируется для показа ~7 дней на экране.
  * - [NEW]: Блокировка кнопки и функционала "Preis ändern" для квартир с бизнес-моделью А.
- * - [NEW]: Возвращены кнопки-стрелки (← →) для быстрой навигации по месяцам.
- * EN: Calendar provider with price editing lock for Model A apartments.
+ * EN: Calendar provider with mobile List View and compact Timeline optimizations.
  */
 final class OwnerCalendarProvider
 {
     // ==========================================================================
-    // РЕГИСТРАЦИЯ ШОРТКОДА / REGISTER SHORTCODE
+    // RU: РЕГИСТРАЦИЯ ШОРТКОДА
+    // EN: REGISTER SHORTCODE
     // ==========================================================================
     public function register(): void
     {
@@ -26,7 +32,8 @@ final class OwnerCalendarProvider
     }
 
     // ==========================================================================
-    // ВЫВОД КАЛЕНДАРЯ / RENDER CALENDAR
+    // RU: ВЫВОД КАЛЕНДАРЯ
+    // EN: RENDER CALENDAR
     // ==========================================================================
     public function renderCalendar(): string
     {
@@ -81,7 +88,8 @@ final class OwnerCalendarProvider
             .sf-cal-day.status-blocked { border-color: #ef4444; background: #fef2f2; } 
             .sf-cal-day.selected, .sf-timeline-cell-day.selected { border-color: #E0B849 !important; box-shadow: inset 0 0 0 3px #E0B849, inset 0 0 20px rgba(224, 184, 73, 0.35) !important; background-color: #fef9e7 !important; transform: scale(0.96); z-index: 10;}
             .sf-cal-day-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px; }
-            .sf-cal-date-num { font-size: 16px; font-weight: 800; color: #1e293b; }
+            .sf-cal-date-num { font-size: 16px; font-weight: 800; color: #1e293b; display: flex; flex-direction: column; }
+            .sf-cal-date-num span { display: none; } /* Скрыто на десктопе, покажем на мобильном */
 
             /* === Timeline View CSS (Gantt) === */
             .sf-timeline-wrapper { overflow-x: auto; background: #fff; border: 2px solid #e2e8f0; border-radius: 10px; margin-bottom: 20px; user-select: none; padding-bottom: 5px;}
@@ -130,7 +138,10 @@ final class OwnerCalendarProvider
             .sf-info-row span:first-child { color: #64748b; font-weight: 600; }
             .sf-info-row span:last-child { color: #082567; font-weight: 800; text-align: right; }
 
-            /* === SECTION: Mobile Responsiveness === */
+            /* ==========================================================================
+               RU: Мобильная адаптация (List View + Compact Timeline)
+               EN: Mobile Responsiveness (List View + Compact Timeline)
+               ========================================================================== */
             @media (max-width: 768px) {
                 .sf-date-filters { width: 100%; justify-content: space-between; }
                 .sf-date-filters .sf-date-inputs { order: -1; width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -141,6 +152,28 @@ final class OwnerCalendarProvider
                 .sf-cal-actions { flex-direction: column; align-items: stretch; gap: 12px; padding: 15px; }
                 .sf-cal-actions > div { text-align: center; margin-bottom: 5px; }
                 .sf-3d-btn { width: 100%; justify-content: center; box-sizing: border-box; margin-left: 0 !important; }
+
+                /* RU: Превращаем Сетку Индивидуального Календаря в Список (List View) */
+                .sf-cal-grid { display: flex; flex-direction: column; gap: 8px; }
+                .sf-cal-day-header, .sf-cal-day.empty { display: none; }
+                .sf-cal-day { 
+                    flex-direction: row; 
+                    align-items: center; 
+                    justify-content: space-between; 
+                    min-height: 60px; 
+                    padding: 12px 15px; 
+                }
+                .sf-cal-day-top { margin-bottom: 0; width: auto; align-items: center; gap: 12px; flex: 1; }
+                .sf-cal-date-num { flex-direction: row; align-items: baseline; gap: 5px; font-size: 18px; }
+                .sf-cal-date-num span { display: inline; font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; }
+                .sf-cal-day-info { margin-top: 0; text-align: right; min-width: 100px; }
+                .sf-cal-day-info .text-right-mobile { text-align: right !important; }
+
+                /* RU: Компактизируем Timeline (Все квартиры) для показа большего числа дней */
+                .sf-timeline-cell-apt { width: 95px; padding: 10px 5px; font-size: 11px; line-height: 1.2; word-break: break-word; }
+                .sf-timeline-cell-day { width: 42px; font-size: 11px; }
+                .sf-timeline-header .sf-timeline-cell-day { font-size: 12px; }
+                .sf-timeline-header .sf-timeline-cell-apt { font-size: 10px; }
             }
         </style>
 
@@ -271,8 +304,7 @@ final class OwnerCalendarProvider
 
             const containerEl = document.getElementById('sf-cal-dynamic-container');
             const loaderEl = document.getElementById('sf-cal-loader');
-            const btnPrice = document.getElementById('btn-price');
-            const daysDe = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+            const daysDe = ['So','Mo','Di','Mi','Do','Fr','Sa']; // Пн=1, Вс=0 в JS Date.getDay()
 
             // Инициализация дат по умолчанию (текущий месяц)
             let d = new Date();
@@ -292,6 +324,7 @@ final class OwnerCalendarProvider
 
             // RU: Управление отображением кнопки цены при смене дропдауна
             function togglePriceButtonVisibility() {
+                const btnPrice = document.getElementById('btn-price');
                 if (currentAptId !== 'all' && window.sfAptModels[currentAptId] === 'model_a') {
                     btnPrice.style.display = 'none';
                 } else {
@@ -355,7 +388,8 @@ final class OwnerCalendarProvider
                 let arr = [];
                 for(let dt=new Date(start); dt<=new Date(end); dt.setDate(dt.getDate()+1)){
                     let dy = dt.getFullYear(); let dm = String(dt.getMonth() + 1).padStart(2, '0'); let dd = String(dt.getDate()).padStart(2, '0');
-                    arr.push({ str: `${dy}-${dm}-${dd}`, dayNum: dt.getDate(), monthNum: dm });
+                    let dayName = daysDe[dt.getDay()];
+                    arr.push({ str: `${dy}-${dm}-${dd}`, dayNum: dt.getDate(), monthNum: dm, dayName: dayName });
                 }
                 return arr;
             }
@@ -440,7 +474,9 @@ final class OwnerCalendarProvider
                 let grid = document.createElement('div');
                 grid.className = 'sf-cal-grid';
                 
-                daysDe.forEach(d => {
+                // Рендер шапки дней недели для десктопа (сдвигаем: Пн-Вс)
+                const gridDays = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+                gridDays.forEach(d => {
                     let dEl = document.createElement('div'); dEl.className = 'sf-cal-day-header'; dEl.textContent = d; grid.appendChild(dEl);
                 });
 
@@ -462,9 +498,12 @@ final class OwnerCalendarProvider
                     
                     let topDiv = document.createElement('div');
                     topDiv.className = 'sf-cal-day-top';
-                    let num = document.createElement('div'); num.className = 'sf-cal-date-num'; num.textContent = dInfo.dayNum;
-                    let badge = document.createElement('div'); 
                     
+                    let num = document.createElement('div'); 
+                    num.className = 'sf-cal-date-num'; 
+                    num.innerHTML = `${dInfo.dayNum} <span>${dInfo.dayName}</span>`; // span виден только на мобильном
+                    
+                    let badge = document.createElement('div'); 
                     if (dayData.status === 'free') {
                         badge.className = 'sf-cal-badge badge-free'; badge.textContent = 'Frei';
                     } else if (dayData.status === 'blocked') {
@@ -485,19 +524,20 @@ final class OwnerCalendarProvider
 
                     if (dayData.status === 'booked') {
                         if (dayData.source_type === 'Stay4Fair') {
-                            infoDiv.innerHTML = `<strong>${dayData.guest_name}</strong><span style="opacity:0.7">ID: #${dayData.booking_id}</span>`;
+                            infoDiv.innerHTML = `<div class="text-right-mobile"><strong>${dayData.guest_name}</strong><span style="opacity:0.7">ID: #${dayData.booking_id}</span></div>`;
                         } else {
-                            infoDiv.innerHTML = `<span style="opacity:0.7">Ext. Sync</span>`;
+                            infoDiv.innerHTML = `<div class="text-right-mobile"><span style="opacity:0.7">Ext. Sync</span></div>`;
                         }
                     } else if (dayData.status === 'free' && dayData.price > 0) {
                         let pColor = dayData.price_type === 'Individuell' ? '#E0B849' : '#64748b';
-                        infoDiv.innerHTML = `<div style="text-align:right; margin-top:auto;">
+                        infoDiv.innerHTML = `<div style="text-align:right; margin-top:auto;" class="text-right-mobile">
                                                 <strong style="color:#082567; font-size:14px;">${dayData.price}€</strong><br>
                                                 <span style="font-size:9px; color:${pColor}; font-weight:bold; text-transform:uppercase;">${dayData.price_type}</span>
                                              </div>`;
                     }
                     div.appendChild(infoDiv);
                     
+                    // Выделение кликом для мобильных (mousedown отрабатывает при touch)
                     div.addEventListener('mousedown', (e) => {
                         if(dayData.status === 'booked') { openBookingModal(dateStr, dayData); return; }
                         isDragging = true; toggleSelect(div, currentAptId, dateStr);
@@ -524,7 +564,7 @@ final class OwnerCalendarProvider
             
             document.getElementById('sf-apt-select').addEventListener('change', (e) => { 
                 currentAptId = e.target.value; 
-                togglePriceButtonVisibility(); // Check UI state on change
+                togglePriceButtonVisibility(); 
                 fetchCalendar(); 
             });
 
@@ -593,7 +633,7 @@ final class OwnerCalendarProvider
                 } catch(e) { console.error(e); hideLoader(); }
             });
 
-            togglePriceButtonVisibility(); // Initial check
+            togglePriceButtonVisibility(); 
             fetchCalendar();
         });
         </script>
