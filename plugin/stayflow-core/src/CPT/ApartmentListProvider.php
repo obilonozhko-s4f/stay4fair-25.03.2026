@@ -5,12 +5,11 @@ declare(strict_types=1);
 namespace StayFlow\CPT;
 
 /**
- * Version: 1.0.5
+ * Version: 1.0.6
  * RU: Вывод списка квартир.
- * - [FIX]: Поиск квартир не только по post_author, но и по ключу bsbt_owner_id.
- * - [NEW]: Добавлены бейджи бизнес-моделей (Modell A / B).
- * - [NEW]: Добавлена кнопка и попап "Modell wechseln" для B2C владельцев с отправкой AJAX.
- * EN: Apartment list rendering. Model badges and "Change Model" B2C logic added.
+ * - [FIX]: Отцентрирован текст в кнопке запроса и крестик закрытия в попапе.
+ * - [UPDATE]: Тексты для сравнения моделей теперь тянутся из ContentRegistry (stayflow_registry_content).
+ * EN: Apartment list rendering. UI fixes for modal and dynamic content registry integration.
  */
 final class ApartmentListProvider
 {
@@ -64,6 +63,17 @@ final class ApartmentListProvider
         $nonce = wp_create_nonce('sf_model_change_nonce');
         $ajax_url = admin_url('admin-ajax.php');
 
+        // RU: Загружаем тексты из ContentRegistry
+        // EN: Load texts from ContentRegistry
+        $content_reg = get_option('stayflow_registry_content', []);
+        
+        // Fallbacks (matching ContentRegistry defaults)
+        $mod_a_title = $content_reg['model_a_compare_title'] ?? '🔵 Modell A (Direkt)';
+        $mod_b_title = $content_reg['model_b_compare_title'] ?? '🟡 Modell B (Vermittlung)';
+        $mod_a_desc  = $content_reg['model_a_compare_desc'] ?? '<strong>Stay4Fair zahlt die City-Tax</strong>.<br><br>Sie geben nur Ihren Netto-Auszahlungswunsch an. Wir kümmern uns um den Endpreis. <em>(Für die Einkommensteuer bleiben Sie selbst verantwortlich.)</em><br><br><em>Ideal für weniger Bürokratie.</em>';
+        $mod_b_desc  = $content_reg['model_b_compare_desc'] ?? '<strong>Sie zahlen die City-Tax & Steuern selbst</strong>.<br><br>Sie bestimmen den Brutto-Endpreis für den Gast. Stay4Fair berechnet 15% Provision.<br><br><em>Volle Preiskontrolle für den Vermieter.</em>';
+        $mod_footer  = $content_reg['model_compare_footer'] ?? 'Der Wechsel des Modells wird von unserem Team geprüft. Laufende Buchungen bleiben unberührt.';
+
         ob_start();
         ?>
         <style>
@@ -71,7 +81,8 @@ final class ApartmentListProvider
             .sf-apt-list-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #E0B849; padding-bottom: 15px; margin-bottom: 25px; }
             .sf-apt-list-header h2 { color: #082567; margin: 0; font-size: 24px; font-weight: 700; }
             
-            .sf-3d-btn { position: relative !important; overflow: hidden !important; border-radius: 10px !important; border: none !important; box-shadow: 0 14px 28px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.25), inset 0 -5px 10px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 0 0 1px rgba(255,255,255,0.06) !important; transition: all 0.25s ease !important; cursor: pointer !important; display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; background-color: #E0B849 !important; color: #082567 !important; background-image: linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.1) 55%, rgba(0,0,0,0.18) 100%) !important; background-blend-mode: overlay; font-weight: 700; font-size: 14px; text-decoration: none; text-align: center; }
+            /* RU: Добавлен justify-content: center; text-align: center; для идеального выравнивания текста */
+            .sf-3d-btn { position: relative !important; overflow: hidden !important; border-radius: 10px !important; border: none !important; box-shadow: 0 14px 28px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.25), inset 0 -5px 10px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 0 0 1px rgba(255,255,255,0.06) !important; transition: all 0.25s ease !important; cursor: pointer !important; display: inline-flex; align-items: center; justify-content: center; text-align: center; gap: 8px; padding: 12px 24px; background-color: #E0B849 !important; color: #082567 !important; background-image: linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.1) 55%, rgba(0,0,0,0.18) 100%) !important; background-blend-mode: overlay; font-weight: 700; font-size: 14px; text-decoration: none; }
             .sf-3d-btn::before { content: "" !important; position: absolute !important; top: 2% !important; left: 6% !important; width: 88% !important; height: 55% !important; background: radial-gradient(ellipse at center, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.00) 72%) !important; transform: scaleY(0.48) !important; filter: blur(5px) !important; opacity: 0.55 !important; z-index: 1 !important; }
             .sf-3d-btn:hover { background-color: #082567 !important; color: #E0B849 !important; transform: translateY(-2px) !important; }
             
@@ -105,7 +116,11 @@ final class ApartmentListProvider
             .sf-modal-overlay.active { display: flex; opacity: 1; }
             .sf-modal-content { background: #fff; padding: 30px; border-radius: 20px; width: 90%; max-width: 600px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); transform: translateY(20px); transition: transform 0.3s; border: 2px solid #E0B849; position: relative; }
             .sf-modal-overlay.active .sf-modal-content { transform: translateY(0); }
-            .sf-modal-close { position: absolute; top: 15px; right: 15px; background: none; border: none; font-size: 24px; color: #64748b; cursor: pointer; z-index: 10; }
+            
+            /* RU: Исправлено центрирование крестика */
+            .sf-modal-close { position: absolute; top: 15px; right: 15px; background: transparent; border: none; font-size: 24px; color: #64748b; cursor: pointer; z-index: 10; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 50%; padding: 0; line-height: 1; transition: 0.2s; }
+            .sf-modal-close:hover { background: #f1f5f9; color: #082567; }
+            
             .sf-modal-title { color: #082567; margin: 0 0 15px 0; font-size: 22px; font-weight: 800; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; }
             
             .sf-model-compare-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }
@@ -211,29 +226,21 @@ final class ApartmentListProvider
                 <table class="sf-model-compare-table">
                     <thead>
                         <tr>
-                            <th class="col-a">🔵 Modell A (Direkt)</th>
-                            <th class="col-b">🟡 Modell B (Vermittlung)</th>
+                            <th class="col-a"><?php echo wp_kses_post($mod_a_title); ?></th>
+                            <th class="col-b"><?php echo wp_kses_post($mod_b_title); ?></th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td>
-                                <strong>Stay4Fair zahlt die City-Tax</strong>.<br><br>
-                                Sie geben nur Ihren Netto-Auszahlungswunsch an. Wir kümmern uns um den Endpreis.<br><br>
-                                <em>Ideal für weniger Bürokratie.</em>
-                            </td>
-                            <td>
-                                <strong>Sie zahlen die City-Tax & Steuern selbst</strong>.<br><br>
-                                Sie bestimmen den Brutto-Endpreis für den Gast. Stay4Fair berechnet 15% Provision.<br><br>
-                                <em>Volle Preiskontrolle für den Vermieter.</em>
-                            </td>
+                            <td><?php echo wp_kses_post($mod_a_desc); ?></td>
+                            <td><?php echo wp_kses_post($mod_b_desc); ?></td>
                         </tr>
                     </tbody>
                 </table>
 
                 <div style="text-align: center; margin-top: 25px;">
                     <p style="font-size: 13px; color: #64748b; margin-bottom: 15px;">
-                        Der Wechsel des Modells wird von unserem Team geprüft. Laufende Buchungen bleiben unberührt.
+                        <?php echo wp_kses_post($mod_footer); ?>
                     </p>
                     <button type="button" class="sf-3d-btn sf-3d-btn-navy" id="sf-btn-send-model-req" style="width: 100%;">Anfrage senden</button>
                 </div>
