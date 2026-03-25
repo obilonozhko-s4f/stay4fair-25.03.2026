@@ -1,9 +1,9 @@
 <?php
 /**
  * File: /stay4fair.com/wp-content/plugins/stayflow-core/src/Core/Kernel.php
- * Version: 1.1.4
- * RU: Главное ядро инициализации плагина с поддержкой Onboarding, Calendar Sync и Owner Profile.
- * EN: Main initialization kernel of the plugin with Onboarding, Calendar Sync and Owner Profile support.
+ * Version: 1.1.5
+ * RU: Главное ядро инициализации плагина с поддержкой Onboarding, Calendar Sync, Owner Profile и Site Notice.
+ * EN: Main initialization kernel of the plugin with Onboarding, Calendar Sync, Owner Profile and Site Notice support.
  */
 
 declare(strict_types=1);
@@ -21,8 +21,9 @@ use StayFlow\Onboarding\OnboardingProvider;
 use StayFlow\Onboarding\OnboardingHandler;
 use StayFlow\BusinessModel\InvoiceModifier;
 use StayFlow\Api\CalendarApiController;
-use StayFlow\Integration\CancelBookingShortcode; // <-- Добавлено для Фазы 1
+use StayFlow\Integration\CancelBookingShortcode;
 use StayFlow\Booking\CancellationNotificationHandler;
+use StayFlow\Support\SiteNoticeProvider; // <-- Подключаем новый модуль
 
 if (!defined('ABSPATH')) {
     exit;
@@ -95,6 +96,7 @@ final class Kernel
         // =========================================================
         (new CancelBookingShortcode())->register();
         (new CancellationNotificationHandler())->register();
+        
         // RU: Модуль Профиля Владельца (Owner Profile)
         // EN: Owner Profile Module
         if (class_exists('\StayFlow\CPT\OwnerProfileProvider')) {
@@ -106,7 +108,6 @@ final class Kernel
         
         if (class_exists('\StayFlow\Integration\ContractingPartyShortcode')) {
             (new \StayFlow\Integration\ContractingPartyShortcode())->register();
-            
         }
 
         // =========================================================
@@ -114,5 +115,11 @@ final class Kernel
         // EN: INVOICES INITIALIZATION
         // =========================================================
         add_action('init', [InvoiceModifier::class, 'init']);
+
+        // =========================================================
+        // RU: ГЛОБАЛЬНОЕ УВЕДОМЛЕНИЕ (ПОПАП)
+        // EN: GLOBAL SITE NOTICE (POPUP)
+        // =========================================================
+        (new SiteNoticeProvider())->register();
     }
 }
