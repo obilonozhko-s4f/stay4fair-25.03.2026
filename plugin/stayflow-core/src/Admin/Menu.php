@@ -12,9 +12,9 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 2.15.0
- * RU: Управление меню. Добавлены поля для редактирования текстов попапа Modellwechsel в Content Registry.
- * EN: Menu management. Added fields for editing Modellwechsel popup texts in Content Registry.
+ * Version: 2.16.0
+ * RU: Управление меню. Добавлена страница и настройки для глобального уведомления (Site Notice Popup).
+ * EN: Menu management. Added page and settings for Global Site Notice Popup.
  */
 final class Menu
 {
@@ -25,12 +25,14 @@ final class Menu
         add_submenu_page('stayflow-core', 'Settings', 'Settings', 'manage_options', 'stayflow-core-settings', [$this, 'renderSettings']);
         add_submenu_page('stayflow-core', 'Content Registry', 'Content Registry', 'manage_options', 'stayflow-core-content-registry', [$this, 'renderContentRegistry']);
         add_submenu_page('stayflow-core', 'Policies', 'Policies', 'manage_options', 'stayflow-core-policies', [$this, 'renderPolicies']);
+        add_submenu_page('stayflow-core', 'Site Notice', 'Site Notice', 'manage_options', 'stayflow-site-notice', [$this, 'renderSiteNotice']); // <-- Новая вкладка
         add_submenu_page('stayflow-core', 'Owners', 'Owners', 'manage_options', 'stayflow-owners', [$this, 'renderOwnersTable']);
         add_submenu_page('stayflow-core', 'Finance', 'Finance Hub', 'manage_options', 'stayflow-finance', [$this, 'renderFinanceHub']);
 
         add_action('admin_init', function() {
             register_setting('stayflow_policies_group', 'stayflow_registry_policies');
             register_setting('stayflow_content_group', 'stayflow_registry_content');
+            register_setting('stayflow_notice_group', 'stayflow_site_notice_settings'); // <-- Настройки для попапа
             
             // Фикс прав для User Switching
             if (current_user_can('manage_options') && !current_user_can('switch_users')) {
@@ -62,6 +64,17 @@ final class Menu
     public function renderDashboard(): void
     {
         $modules = ModuleRegistry::all();
+        
+        // RU: Добавляем виртуальную плитку для Site Notice (не из реестра)
+        $modules[] = [
+            'key' => 'site_notice',
+            'title' => 'Site Notice (Popup)',
+            'desc' => 'Globales Popup für Ankündigungen oder Wartung.',
+            'icon' => '📢',
+            'status' => 'active',
+            'link' => 'admin.php?page=stayflow-site-notice'
+        ];
+
         ?>
         <div class="wrap stayflow-dashboard">
             <div class="sf-hero">
@@ -98,7 +111,7 @@ final class Menu
         $link = ($module['key'] === 'owners') ? 'admin.php?page=stayflow-owners' : (($module['key'] === 'finance') ? 'admin.php?page=stayflow-finance' : $module['link']);
         $url = $isClickable ? admin_url($link) : '#';
         
-        // RU: Спец-дизайн заголовка для Finance
+        // RU: Спец-дизайн заголовка
         $titleHtml = esc_html($module['title']);
         if ($module['key'] === 'finance') {
             $titleHtml = '<span style="font-weight:800; color:#000;">Finance</span><span style="background:#ff9000; color:#000; padding:2px 6px; border-radius:4px; margin-left:5px; font-weight:900;">Taxes</span>';
@@ -109,7 +122,77 @@ final class Menu
     }
 
     // =========================================================================
-    // 2. СЕТТИНГИ
+    // 2. СЕТТИНГИ (SITE NOTICE / LAUNCH POPUP)
+    // =========================================================================
+    public function renderSiteNotice(): void
+    {
+        $optKey = 'stayflow_site_notice_settings';
+        $options = get_option($optKey, []);
+        
+        $enabled = !empty($options['enabled']) ? 1 : 0;
+        $logo_url = !empty($options['logo_url']) ? $options['logo_url'] : 'https://stay4fair.com/wp-content/uploads/2025/12/gorizontal-color-4.webp';
+        $cookie_days = !empty($options['cookie_days']) ? (int)$options['cookie_days'] : 1;
+        
+        $def_content = "<h2 style=\"text-align: center; color: #082567; margin-top:0;\">Willkommen bei Stay4Fair!</h2>\n<p style=\"text-align: center; color: #334155;\">Wir starten aktuell im Testmodus. Es können noch einige kleine Fehler auftreten, aber unser Team arbeitet mit Hochdruck an der Optimierung. Danke für Ihr Verständnis!</p>\n<hr style=\"border: 0; border-top: 1px dashed #cbd5e1; margin: 20px 0;\">\n<h2 style=\"text-align: center; color: #082567;\">Welcome to Stay4Fair!</h2>\n<p style=\"text-align: center; color: #334155;\">We are currently launching in test mode. Some minor bugs may still occur, but our team is working hard on optimization. Thank you for your understanding!</p>";
+        
+        $content = !empty($options['content']) ? $options['content'] : $def_content;
+        ?>
+        <div class="wrap stayflow-admin-wrap">
+            <h1 class="sf-page-title">📢 Global Site Notice (Popup)</h1>
+            <p style="color: #64748b; margin-bottom: 30px;">Verwalten Sie hier das globale Pop-up-Fenster (z.B. für den Soft-Launch oder Wartungsarbeiten), das auf allen Seiten der Website angezeigt wird.</p>
+            
+            <?php settings_errors('stayflow_notice_group'); ?>
+            <form method="post" action="options.php">
+                <?php settings_fields('stayflow_notice_group'); ?>
+                
+                <div class="sf-settings-grid">
+                    <div class="sf-settings-card">
+                        <h3>⚙️ Popup Status & Verhalten</h3>
+                        <table class="form-table">
+                            <tr>
+                                <th scope="row"><label>Popup Aktivieren?</label></th>
+                                <td>
+                                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                        <input type="checkbox" name="<?php echo $optKey; ?>[enabled]" value="1" <?php checked($enabled, 1); ?>>
+                                        <strong>Ja, Popup auf der Website anzeigen</strong>
+                                    </label>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><label>Schließen merken für (Tage)</label></th>
+                                <td>
+                                    <input type="number" name="<?php echo $optKey; ?>[cookie_days]" value="<?php echo esc_attr((string)$cookie_days); ?>" class="regular-text" style="width: 80px;" min="1" max="365">
+                                    <p class="description">Wenn der Nutzer das Popup schließt, wie viele Tage soll es verborgen bleiben?</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><label>Logo URL (Optional)</label></th>
+                                <td>
+                                    <input type="url" name="<?php echo $optKey; ?>[logo_url]" value="<?php echo esc_attr($logo_url); ?>" class="large-text">
+                                    <p class="description">Fügen Sie hier die direkte Bild-URL ein. Lassen Sie das Feld leer, um kein Logo anzuzeigen.</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="sf-settings-card">
+                        <h3>📝 Inhalt des Popups (Bilingual empfohlen)</h3>
+                        <div class="sf-hint" style="margin-bottom: 15px; padding: 10px; background: #f8fafc; border-left: 3px solid #082567;">Gestalten Sie den Text für das Popup. Sie können Formatierungen, Überschriften und Trennlinien verwenden.</div>
+                        <?php wp_editor($content, 'site_notice_content_editor', ['textarea_name' => $optKey . '[content]', 'media_buttons' => true, 'textarea_rows' => 12, 'tinymce' => true]); ?>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <?php submit_button('Einstellungen speichern', 'primary', 'submit', false, ['style' => 'background: #082567; border-color: #082567; color: #E0B849; padding: 5px 25px; border-radius: 8px;']); ?>
+                </div>
+            </form>
+        </div>
+        <?php $this->adminStyles(); ?>
+        <?php
+    }
+
+    // =========================================================================
+    // 3. СЕТТИНГИ (SYSTEM)
     // =========================================================================
     public function renderSettings(): void
     {
@@ -161,7 +244,7 @@ final class Menu
     }
 
     // =========================================================================
-    // 3. ПОЛИТИКИ ОТМЕНЫ
+    // 4. ПОЛИТИКИ ОТМЕНЫ
     // =========================================================================
     public function renderPolicies(): void
     {
@@ -200,7 +283,7 @@ final class Menu
     }
 
     // =========================================================================
-    // 4. CONTENT REGISTRY
+    // 5. CONTENT REGISTRY
     // =========================================================================
     public function renderContentRegistry(): void
     {
@@ -211,11 +294,9 @@ final class Menu
         $def_tax_single = "<p>Die Auszahlung erfolgt in der Regel innerhalb von 3–7 Werktagen nach Abreise des Gastes.</p>\n<p>Wir freuen uns über Ihre erfolgreichen Buchungen! Bitte beachten Sie, dass die erzielten Einkünfte aus der kurzfristigen Vermietung steuerpflichtig sind. Die Verantwortung für die korrekte Versteuerung sowie die Einhaltung aller steuerlichen Meldepflichten liegt gemäß den gesetzlichen Vorgaben beim Vermieter.</p>\n<p>Ein besonderer Hinweis zum Beherbergungsteuer (City Tax): Bitte prüfen Sie eigenständig die lokalen Satzungen Ihrer Stadt. In vielen Regionen sind Vermieter verpflichtet, diese Steuer ordnungsgemäß zu erfassen und abzuführen. Da die Handhabung je nach Aufenthaltszweck (geschäftlich oder privat) variieren kann, liegt die finale Prüfung und Abwicklung ausschließlich in Ihrer Hand.</p>\n<p>Stay4Fair unterstützt Sie mit der Bereitstellung der Buchungsdaten, übernimmt jedoch keine steuerliche Beratung oder Haftung.</p>";
         $def_tax_monthly = "<p>Die Auszahlung erfolgt in der Regel innerhalb von 3–7 Werktagen nach Abreise des Gastes.</p>\n\n<p><strong>Für Buchungen nach Modell A (Direkt):</strong> Die Abführung der Beherbergungsteuer (City-Tax) für diese Buchungen wurde von Stay4Fair übernommen. Für die Versteuerung Ihrer Einkünfte sind Sie selbst verantwortlich.</p>\n\n<p><strong>Für Buchungen nach Modell B (Vermittlung):</strong> Bitte beachten Sie, dass die erzielten Einkünfte aus der kurzfristigen Vermietung steuerpflichtig sind. Die Verantwortung für die korrekte Versteuerung sowie die Einhaltung aller steuerlichen Meldepflichten liegt beim Vermieter. Bitte prüfen Sie eigenständig die lokalen Satzungen bezüglich Beherbergungssteuer (City Tax).</p>\n\n<p><strong>Stay4Fair unterstützt Sie mit der Bereitstellung der Buchungsdaten, übernimmt jedoch keine steuerliche Beratung oder Haftung.</strong></p>";
         
-        // RU: Новые дефолтные тексты для шорткода Contracting Party
         $def_cp_a = "The contracting party is Stay4Fair.com. This property is managed by our professional partner.";
         $def_cp_b = "The contracting party for the accommodation is the respective property owner. Stay4Fair acts as an authorized intermediary.";
 
-        // RU: Тексты для попапа смены модели
         $def_mod_a_title = "🔵 Modell A (Direkt)";
         $def_mod_b_title = "🟡 Modell B (Vermittlung)";
         $def_mod_a_desc  = "<strong>Stay4Fair zahlt die City-Tax</strong>.<br><br>Sie geben nur Ihren Netto-Auszahlungswunsch an. Wir kümmern uns um den Endpreis. <em>(Für die Einkommensteuer bleiben Sie selbst verantwortlich.)</em><br><br><em>Ideal für weniger Bürokratie.</em>";
