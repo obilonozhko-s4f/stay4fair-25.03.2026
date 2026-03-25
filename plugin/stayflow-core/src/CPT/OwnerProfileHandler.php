@@ -9,11 +9,9 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 1.3.0
- * RU: Обработчик формы профиля владельца (Bulletproof & Admin-Safe).
- * EN: Owner profile form handler (Bulletproof & Admin-Safe).
- * - [NEW]: Поддержка загрузки кастомного аватара (owner_avatar).
- * - [SEC]: Защита от дубликатов Email и удалений администратора.
+ * Version: 1.5.0
+ * RU: Обработчик формы профиля владельца. Двойная проверка аватара (MIME + EXT). Исправлен raw SQL IN().
+ * EN: Owner profile form handler. Double check for avatar (MIME + EXT). Fixed raw SQL IN().
  */
 final class OwnerProfileHandler
 {
@@ -59,17 +57,24 @@ final class OwnerProfileHandler
     // ==========================================
     private function saveProfile(int $userId): void
     {
-        // RU: Обработка загрузки Аватара
-        // EN: Avatar upload handling
-        if (!empty($_FILES['owner_avatar']['name'])) {
-            require_once(ABSPATH . 'wp-admin/includes/image.php');
-            require_once(ABSPATH . 'wp-admin/includes/file.php');
-            require_once(ABSPATH . 'wp-admin/includes/media.php');
+        // RU: Обработка загрузки Аватара с двойной защитой (MIME + EXT)
+        // EN: Avatar upload handling with double protection (MIME + EXT)
+        if (!empty($_FILES['owner_avatar']['name']) && $_FILES['owner_avatar']['error'] === UPLOAD_ERR_OK) {
+            $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+            $allowedExts      = ['jpg', 'jpeg', 'png', 'webp'];
+            
+            $fileCheck = wp_check_filetype_and_ext($_FILES['owner_avatar']['tmp_name'], $_FILES['owner_avatar']['name']);
+            
+            if (in_array($fileCheck['type'], $allowedMimeTypes, true) && in_array($fileCheck['ext'], $allowedExts, true)) {
+                require_once(ABSPATH . 'wp-admin/includes/image.php');
+                require_once(ABSPATH . 'wp-admin/includes/file.php');
+                require_once(ABSPATH . 'wp-admin/includes/media.php');
 
-            $attachment_id = media_handle_upload('owner_avatar', 0);
+                $attachment_id = media_handle_upload('owner_avatar', 0);
 
-            if (!is_wp_error($attachment_id)) {
-                update_user_meta($userId, 'stayflow_avatar_id', $attachment_id);
+                if (!is_wp_error($attachment_id)) {
+                    update_user_meta($userId, 'stayflow_avatar_id', $attachment_id);
+                }
             }
         }
 
@@ -79,8 +84,6 @@ final class OwnerProfileHandler
         update_user_meta($userId, 'last_name', sanitize_text_field($_POST['last_name'] ?? ''));
         update_user_meta($userId, 'billing_phone', sanitize_text_field($_POST['phone'] ?? ''));
         
-        // RU: Правильные ключи
-        // EN: Correct keys
         update_user_meta($userId, 'bsbt_alt_phone', sanitize_text_field($_POST['alt_phone'] ?? ''));
         update_user_meta($userId, 'bsbt_account_holder', sanitize_text_field($_POST['bank_name'] ?? ''));
         update_user_meta($userId, 'bsbt_iban', sanitize_text_field($_POST['iban'] ?? ''));
@@ -131,7 +134,6 @@ final class OwnerProfileHandler
         if (!empty($newEmail) && $newEmail !== $user->user_email) {
             $existing_user_id = email_exists($newEmail);
             if ($existing_user_id && $existing_user_id !== $userId) {
-                // Email уже занят кем-то другим! Возвращаем ошибку.
                 wp_safe_redirect(add_query_arg('security_error', 'email_exists', wp_get_referer()));
                 exit;
             }
@@ -171,14 +173,16 @@ final class OwnerProfileHandler
 
         global $wpdb;
 
+        // RU: Строгое сравнение строк %s для meta_value
+        // EN: Strict string comparison %s for meta_value
         $apt_ids = $wpdb->get_col($wpdb->prepare("
             SELECT DISTINCT p.ID 
             FROM {$wpdb->posts} p
             LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'bsbt_owner_id'
             WHERE p.post_type = 'mphb_room_type' 
             AND p.post_status != 'trash'
-            AND (p.post_author = %d OR pm.meta_value = %d)
-        ", $userId, $userId));
+            AND (p.post_author = %d OR pm.meta_value = %s)
+        ", $userId, (string)$userId));
 
         foreach ($apt_ids as $aid) {
             wp_update_post(['ID' => $aid, 'post_status' => 'draft']);
@@ -186,7 +190,14 @@ final class OwnerProfileHandler
 
         $hasFutureBookings = false;
         if (!empty($apt_ids) && function_exists('MPHB')) {
-            $room_ids = $wpdb->get_col("SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'mphb_room_type_id' AND meta_value IN (" . implode(',', array_map('intval', $apt_ids)) . ")");
+            
+            // RU: Безопасный запрос с IN() через динамические плейсхолдеры. 
+            // EN: Secure IN() query via dynamic placeholders.
+            $clean_apt_ids = array_map('intval', $apt_ids);
+            $placeholders  = implode(',', array_fill(0, count($clean_apt_ids), '%d'));
+            
+            $query = "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'mphb_room_type_id' AND meta_value IN ($placeholders)";
+            $room_ids = $wpdb->get_col($wpdb->prepare($query, ...$clean_apt_ids));
             
             if (!empty($room_ids)) {
                 $today = current_time('Y-m-d');
