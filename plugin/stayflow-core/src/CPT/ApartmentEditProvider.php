@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace StayFlow\CPT;
 
 /**
- * Version: 1.2.1
+ * Version: 1.2.2
  * RU: Полная форма редактирования:
  * - [CRITICAL FIX]: Проверка прав теперь учитывает кастомное поле bsbt_owner_id (устранение ошибки Zugriff verweigert).
  * - [FIX]: Исправлена валидация iCal ссылок (JS Alert + preventDefault).
+ * - [NEW]: Динамический текст-подсказка для цены в зависимости от бизнес-модели.
+ * EN: Full edit form with permissions fix and dynamic price hint based on business model.
  */
 final class ApartmentEditProvider
 {
@@ -54,6 +56,12 @@ final class ApartmentEditProvider
         $status      = $post->post_status; 
         $price       = get_post_meta($apt_id, '_sf_selling_price', true);
         $min_stay    = get_post_meta($apt_id, 'sf_min_stay', true) ?: 1;
+
+        // RU: Извлекаем бизнес-модель и настройки комиссии
+        // EN: Extract business model and commission settings
+        $business_model = get_post_meta($apt_id, '_bsbt_business_model', true) ?: 'model_a';
+        $stayflow_settings = get_option('stayflow_core_settings', []);
+        $commission_rate = !empty($stayflow_settings['commission_default']) ? $stayflow_settings['commission_default'] : '15';
 
         // === SECTION: iCal Links (Multi-fetch) ===
         global $wpdb;
@@ -270,7 +278,12 @@ final class ApartmentEditProvider
                     <div class="sf-form-group" style="flex:1;">
                         <label>Preis pro Nacht (€) *</label>
                         <input type="number" name="apt_price" step="0.01" value="<?php echo esc_attr($price); ?>" required>
-                        <p class="sf-field-hint">Geben Sie Ihren gewünschten Endpreis an. <strong>Wichtig:</strong> Dieser Preis muss bereits unsere 15% Provision sowie die lokale City-Tax (Tourismusabgabe) enthalten.</p>
+                        
+                        <?php if ($business_model === 'model_a'): ?>
+                            <p class="sf-field-hint">Geben Sie Ihren gewünschten <strong>Auszahlungsbetrag (Netto)</strong> pro Nacht an. Stay4Fair kümmert sich um die City-Tax. Sie müssen diesen Betrag lediglich einkommenversteuern.</p>
+                        <?php else: ?>
+                            <p class="sf-field-hint">Geben Sie Ihren gewünschten Endpreis an. <strong>Wichtig:</strong> Dieser Preis muss bereits unsere <strong><?php echo esc_html($commission_rate); ?>% Provision</strong> sowie die lokale City-Tax (Tourismusabgabe) enthalten.</p>
+                        <?php endif; ?>
                     </div>
                     <div class="sf-form-group" style="flex:1;">
                         <label>Min. Aufenthalt (Nächte) *</label>
