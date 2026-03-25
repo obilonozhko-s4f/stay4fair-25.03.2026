@@ -9,9 +9,11 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 1.0.0
- * RU: Провайдер Центра Поддержки Владельцев (Owner Support). Вывод формы и отправка (Email + WhatsApp).
- * EN: Owner Support Center provider. Form rendering and sending logic (Email + WhatsApp).
+ * Version: 1.1.0
+ * RU: Провайдер Центра Поддержки Владельцев. 
+ * - [FIX]: Мобильная верстка кнопок (выстраиваются в колонку).
+ * - [UPDATE]: Динамический номер WhatsApp (настройки -> фоллбэк на админа).
+ * EN: Owner Support Center provider. Mobile buttons fix and dynamic WA number logic.
  */
 final class SupportProvider
 {
@@ -31,7 +33,6 @@ final class SupportProvider
         $user = get_userdata($userId);
         
         // RU: Получаем все квартиры владельца
-        // EN: Get all owner's apartments
         global $wpdb;
         $apt_ids = $wpdb->get_col($wpdb->prepare("
             SELECT DISTINCT p.ID 
@@ -54,6 +55,25 @@ final class SupportProvider
 
         $nonce = wp_create_nonce('sf_support_nonce');
         $ajax_url = admin_url('admin-ajax.php');
+
+        // ==========================================================================
+        // RU: ЛОГИКА НОМЕРА WHATSAPP (DYNAMIC NUMBER RESOLUTION)
+        // ==========================================================================
+        $settings = get_option('stayflow_core_settings', []);
+        $wa_phone = !empty($settings['support_phone']) ? preg_replace('/[^0-9]/', '', $settings['support_phone']) : '';
+        
+        // RU: Если номер не задан, ищем главного админа
+        if (empty($wa_phone)) {
+            $admin_users = get_users(['role' => 'administrator', 'number' => 1]);
+            if (!empty($admin_users)) {
+                $admin_id = $admin_users[0]->ID;
+                $phone = get_user_meta($admin_id, 'bsbt_phone', true);
+                if (empty($phone)) {
+                    $phone = get_user_meta($admin_id, 'billing_phone', true); // Запасной вариант
+                }
+                $wa_phone = preg_replace('/[^0-9]/', '', (string)$phone);
+            }
+        }
 
         ob_start();
         ?>
@@ -100,6 +120,14 @@ final class SupportProvider
             
             .btn-wa { background-color: #25D366 !important; color: #ffffff !important; background-image: linear-gradient(180deg, rgba(255,255,255,0.2) 0%, rgba(0,0,0,0.15) 100%) !important; background-blend-mode: overlay; }
             .btn-wa:hover { background-color: #128C7E !important; background-image: linear-gradient(180deg, rgba(255,255,255,0.3) 0%, rgba(0,0,0,0.1) 100%) !important; }
+
+            /* ==========================================================================
+               MOBILE RESPONSIVENESS (Кнопки друг под другом)
+               ========================================================================== */
+            @media (max-width: 768px) {
+                .sf-support-actions { flex-direction: column; gap: 12px; }
+                .sf-support-actions .sf-3d-btn { width: 100%; box-sizing: border-box; }
+            }
         </style>
 
         <div class="sf-support-container">
@@ -157,6 +185,7 @@ final class SupportProvider
                 const feedback = document.getElementById('sf-support-feedback');
                 
                 const ownerName = "<?php echo esc_js($user->display_name); ?>";
+                const waPhone = "<?php echo esc_js($wa_phone); ?>";
 
                 function getSelectedApts() {
                     let apts = [];
@@ -170,6 +199,11 @@ final class SupportProvider
                 // WHATSAPP LOGIC
                 // ==========================================
                 btnWa.addEventListener('click', function() {
+                    if (!waPhone) {
+                        alert('Hinweis: Es ist derzeit keine WhatsApp-Nummer im System hinterlegt. Bitte nutzen Sie E-Mail.');
+                        return;
+                    }
+
                     let apts = getSelectedApts();
                     let msg = msgBox.value.trim();
                     
@@ -183,7 +217,7 @@ final class SupportProvider
                         text += `Ich habe eine Frage zu...`;
                     }
 
-                    let waUrl = `https://wa.me/4917624615269?text=${encodeURIComponent(text)}`;
+                    let waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(text)}`;
                     window.open(waUrl, '_blank');
                 });
 
@@ -264,7 +298,6 @@ final class SupportProvider
         $apts = is_array($apts_raw) ? array_map('sanitize_text_field', $apts_raw) : [];
 
         // RU: Получаем Email саппорта из настроек, фоллбэк на админский
-        // EN: Get Support Email from settings, fallback to admin email
         $settings = get_option('stayflow_core_settings', []);
         $to_email = !empty($settings['support_email']) ? sanitize_email($settings['support_email']) : get_option('admin_email');
 
@@ -298,8 +331,7 @@ final class SupportProvider
         <?php
         $email_body = ob_get_clean();
 
-        // RU: Ставим Reply-To на владельца, чтобы админ мог просто ответить на письмо
-        // EN: Set Reply-To to owner so admin can just hit reply
+        // RU: Ставим Reply-To на владельца
         $headers = [
             'Content-Type: text/html; charset=UTF-8',
             'Reply-To: ' . $user->display_name . ' <' . $user->user_email . '>'
