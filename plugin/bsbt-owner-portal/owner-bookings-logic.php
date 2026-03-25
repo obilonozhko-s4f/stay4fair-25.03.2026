@@ -1,9 +1,11 @@
 <?php
+declare(strict_types=1);
+
 /**
- * Plugin Name: BSBT – Owner Bookings (V7.9.6 – Fixed Auszahlung for Free Cancellations)
+ * Plugin Name: BSBT – Owner Bookings (V8.0.0 – Stornierungsanfrage added)
  */
 
-if ( ! defined( 'ABSPATH' ) ) exit;
+if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 // ✅ Core is required (otherwise "Core not loaded")
 require_once plugin_dir_path(__FILE__) . 'includes/owner-decision-core.php';
@@ -16,6 +18,10 @@ final class BSBT_Owner_Bookings {
 
         add_action('wp_ajax_bsbt_confirm_booking', [$this, 'ajax_confirm']);
         add_action('wp_ajax_bsbt_reject_booking',  [$this, 'ajax_reject']);
+        
+        // RU: Хук для запроса на отмену
+        // EN: Hook for cancellation request
+        add_action('wp_ajax_bsbt_request_cancel_booking', [$this, 'ajax_request_cancel']);
 
         add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
     }
@@ -31,7 +37,7 @@ final class BSBT_Owner_Bookings {
             'bsbt-owner-bookings',
             plugin_dir_url(__FILE__) . 'assets/css/owner-bookings.css',
             [],
-            '7.9.6'
+            '8.0.0'
         );
     }
 
@@ -93,13 +99,10 @@ final class BSBT_Owner_Bookings {
        MODEL DETECTION (Snapshot first)
        ========================================================= */
     private function get_booking_model(int $booking_id): string {
-
-        // 1) Snapshot first
         $m = (string) get_post_meta($booking_id, '_bsbt_snapshot_model', true);
         $m = trim($m);
         if ($m !== '') return $m;
 
-        // 2) Room type meta
         if (function_exists('MPHB')) {
             try {
                 $b = MPHB()->getBookingRepository()->findById($booking_id);
@@ -118,23 +121,18 @@ final class BSBT_Owner_Bookings {
                 // ignore
             }
         }
-
-        // Conservative default: legacy behaviour
         return 'model_a';
     }
 
     /* =========================================================
        WOO ORDER RESOLVER (Safe, no dependency on Core private)
        ========================================================= */
-
     private function find_order_for_booking(int $booking_id): ?WC_Order {
-
         if ($booking_id <= 0) return null;
         if (!function_exists('wc_get_orders') || !function_exists('wc_get_order')) return null;
 
         $statuses = array_keys( wc_get_order_statuses() );
 
-        // 1) welded booking id
         $orders = wc_get_orders([
             'limit'      => 1,
             'meta_key'   => '_bsbt_booking_id',
@@ -145,7 +143,6 @@ final class BSBT_Owner_Bookings {
         ]);
         if (!empty($orders) && $orders[0] instanceof WC_Order) return $orders[0];
 
-        // 2) direct booking id bridge
         $orders = wc_get_orders([
             'limit'      => 1,
             'meta_key'   => '_mphb_booking_id',
@@ -156,7 +153,6 @@ final class BSBT_Owner_Bookings {
         ]);
         if (!empty($orders) && $orders[0] instanceof WC_Order) return $orders[0];
 
-        // 3) MPHB payment bridge: booking -> payment -> order
         $order_id = $this->resolve_order_id_via_mphb_payment_bridge($booking_id);
         if ($order_id > 0) {
             $o = wc_get_order($order_id);
@@ -167,13 +163,11 @@ final class BSBT_Owner_Bookings {
     }
 
     private function resolve_order_id_via_mphb_payment_bridge(int $booking_id): int {
-
         if ($booking_id <= 0) return 0;
         if (!function_exists('get_posts')) return 0;
 
         global $wpdb;
 
-        // 1) find latest payment post for booking
         $payments = get_posts([
             'post_type'      => 'mphb_payment',
             'post_status'    => 'any',
@@ -213,7 +207,6 @@ final class BSBT_Owner_Bookings {
 
         if ($payment_id <= 0) return 0;
 
-        // 2) lookup order_id via order_itemmeta
         $table_itemmeta = $wpdb->prefix . 'woocommerce_order_itemmeta';
         $table_items    = $wpdb->prefix . 'woocommerce_order_items';
 
@@ -243,7 +236,6 @@ final class BSBT_Owner_Bookings {
        🔒 PAYOUT (Model A/B aware)
        ========================================================= */
     private function payout(int $booking_id, int $nights): ?float {
-
         $snapshot_payout = get_post_meta($booking_id, '_bsbt_snapshot_owner_payout', true);
         if ($snapshot_payout !== '') {
             return (float) $snapshot_payout;
@@ -288,7 +280,6 @@ final class BSBT_Owner_Bookings {
     /* =========================
      * RENDER
      * ========================= */
-
     public function render() {
         if ( ! is_user_logged_in() || ! $this->is_owner_or_admin() ) return 'Zugriff verweigert.';
 
@@ -348,12 +339,8 @@ final class BSBT_Owner_Bookings {
                         [$in,$out] = $this->get_dates($bid);
                         $nights = $this->nights($in,$out);
                         
-                        // Базовый расчет выплаты
                         $payout = $this->payout($bid,$nights);
 
-                        // =========================================================
-                        // ЛОГИКА ОТМЕНЫ: Обнуляем выплату, если отмена бесплатная
-                        // =========================================================
                         if ($cancelled) {
                             $snapshot = get_post_meta($bid, '_bsbt_financial_snapshot', true);
                             $refund_type = is_array($snapshot) ? ($snapshot['refund_type'] ?? '') : '';
@@ -469,6 +456,23 @@ final class BSBT_Owner_Bookings {
                                         <?php if($checkin_time): ?><br><strong>Ankunftszeit: <?= esc_html((string)$checkin_time) ?></strong><?php endif; ?>
                                     </div>
 
+                                    <?php
+                                    // RU: Блок запроса на отмену
+                                    // EN: Cancellation request block
+                                    $cancel_req = get_post_meta($bid, '_bsbt_cancel_requested', true);
+                                    if ($cancel_req): ?>
+                                        <div style="margin-top:10px; font-size:11px; color:#64748b; font-weight:600;">
+                                            ⏳ Stornierungsanfrage gesendet
+                                        </div>
+                                    <?php else: ?>
+                                        <button class="button btn-action-request-cancel bsbt-btn-base"
+                                                data-id="<?= (int)$bid ?>"
+                                                data-nonce="<?= esc_attr($nonce) ?>"
+                                                style="background: transparent; color: #64748b; border: 1px solid #cbd5e1; margin-top: 10px; font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer; transition: 0.3s;">
+                                            Stornierung anfragen
+                                        </button>
+                                    <?php endif; ?>
+
                                 <?php elseif ($owner_decision === 'declined'): ?>
                                     <div style="color:#d32f2f;font-weight:600;line-height:1.4; text-align: left; padding: 5px;">
                                         🚫 Abgelehnt.<br>
@@ -529,6 +533,8 @@ final class BSBT_Owner_Bookings {
         <script>
         (function(){
             const ajax = <?= json_encode($ajax) ?>;
+            
+            // RU: Обработчики для подтверждения / отклонения
             document.querySelectorAll('.btn-action-confirm,.btn-action-reject').forEach(btn=>{
                 btn.addEventListener('click',()=>{
                     if(!confirm('Aktion bestätigen?')) return;
@@ -544,11 +550,50 @@ final class BSBT_Owner_Bookings {
                         });
                 });
             });
+
+            // RU: Обработчик для запроса на отмену
+            document.querySelectorAll('.btn-action-request-cancel').forEach(btn=>{
+                btn.addEventListener('click',()=>{
+                    if(!confirm('Sind Sie sicher, dass Sie eine Stornierung für diese Buchung anfragen möchten?')) return;
+                    
+                    // Визуальный отклик
+                    const originalText = btn.innerText;
+                    btn.innerText = 'Bitte warten...';
+                    btn.disabled = true;
+
+                    const d = new URLSearchParams();
+                    d.append('action', 'bsbt_request_cancel_booking');
+                    d.append('booking_id', btn.dataset.id);
+                    d.append('_wpnonce', btn.dataset.nonce);
+                    
+                    fetch(ajax, { method: 'POST', headers: { 'Content-Type':'application/x-www-form-urlencoded' }, body: d })
+                        .then(r=>r.json())
+                        .then(res=>{
+                            if (res && res.success) { 
+                                location.reload(); 
+                                return; 
+                            }
+                            btn.innerText = originalText;
+                            btn.disabled = false;
+                            alert('Fehler: ' + ((res && res.data && res.data.message) ? res.data.message : 'Unknown error'));
+                        })
+                        .catch(err => {
+                            btn.innerText = originalText;
+                            btn.disabled = false;
+                            alert('Ein Systemfehler ist aufgetreten.');
+                        });
+                });
+            });
+
         })();
         </script>
 
         <?php return ob_get_clean();
     }
+
+    /* ==========================================================================
+     * AJAX ACTIONS
+     * ========================================================================== */
 
     public function ajax_confirm() {
         check_ajax_referer('bsbt_owner_action');
@@ -578,6 +623,48 @@ final class BSBT_Owner_Bookings {
         $result = BSBT_Owner_Decision_Core::decline_booking($id);
         if ( ! empty($result['ok']) ) wp_send_json_success(['message' => $result['message'] ?? 'OK']);
         wp_send_json_error(['message' => $result['message'] ?? 'Error']);
+    }
+
+    public function ajax_request_cancel() {
+        check_ajax_referer('bsbt_owner_action');
+        if ( ! $this->is_owner_or_admin() ) wp_send_json_error(['message'=>'No permission']);
+        
+        $id = (int)($_POST['booking_id'] ?? 0);
+        if ($id <= 0) wp_send_json_error(['message'=>'Invalid booking id']);
+        
+        $user_id = get_current_user_id();
+        
+        // RU: Проверяем, что это бронь именно этого владельца (если это не админ)
+        // EN: Ensure booking belongs to the current owner (if not admin)
+        if ( ! current_user_can('manage_options') ) {
+            if ( $this->get_booking_owner_id($id) !== $user_id ) {
+                wp_send_json_error(['message'=>'Not your booking']);
+            }
+        }
+
+        // RU: Ставим мета-метку, чтобы заблокировать кнопку повторного клика
+        // EN: Set meta flag to lock the button
+        update_post_meta($id, '_bsbt_cancel_requested', '1');
+
+        // RU: Подготовка и отправка уведомления админу на базовый Email
+        // EN: Prepare and send notification to admin
+        $admin_email = get_option('admin_email');
+        $user = get_userdata($user_id);
+        $owner_name = $user ? $user->display_name : 'Vermieter';
+        
+        $edit_url = admin_url("post.php?post={$id}&action=edit");
+        
+        $subject = "🚨 Stornierungsanfrage – Buchung #{$id}";
+        $message = "Hallo Admin,\n\n"
+                 . "Der Vermieter ({$owner_name}) hat eine Stornierung für die Buchung #{$id} angefragt.\n\n"
+                 . "Bitte prüfe den Fall und kläre die Situation mit dem Gast.\n\n"
+                 . "Link zur Buchung in WP-Admin:\n"
+                 . "{$edit_url}\n\n"
+                 . "Stay4Fair System";
+
+        wp_mail($admin_email, $subject, $message);
+
+        wp_send_json_success(['message' => 'Anfrage erfolgreich gesendet']);
     }
 }
 
