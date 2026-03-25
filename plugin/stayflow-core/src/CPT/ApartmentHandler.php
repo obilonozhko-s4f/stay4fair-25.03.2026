@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace StayFlow\CPT;
 
 /**
- * Version: 1.2.0
- * RU: Обработчик создания (Фикс ключа _sf_commune_reg_id и моментальная привязка iCal к новой комнате).
- * EN: Creation handler (Fixed _sf_commune_reg_id key and instant iCal attach to the new room).
+ * Version: 1.4.0
+ * RU: Обработчик создания. Идеальный hardening загрузки фото (MIME + EXT проверка).
+ * EN: Creation handler. Perfect photo upload hardening (MIME + EXT check).
  */
 final class ApartmentHandler
 {
@@ -41,10 +41,7 @@ final class ApartmentHandler
         // 2. Базовые данные
         update_post_meta($postId, 'bsbt_owner_id', $userId);
         update_post_meta($postId, 'address', sanitize_text_field($_POST['apt_address']));
-        
-        // ПРАВИЛЬНЫЙ КЛЮЧ С ПОДЧЕРКИВАНИЕМ
         update_post_meta($postId, '_sf_commune_reg_id', sanitize_text_field($_POST['apt_reg_id'] ?? ''));
-        
         update_post_meta($postId, 'doorbell_name', sanitize_text_field($_POST['apt_doorbell']));
         update_post_meta($postId, 'owner_phone', sanitize_text_field($_POST['apt_contact_phone']));
 
@@ -111,7 +108,6 @@ final class ApartmentHandler
             update_post_meta($accomId, 'mphb_room_type_id', $postId);
             update_post_meta($accomId, '_mphb_room_type_id', $postId);
             
-            // Если хост сразу вставил ссылку при создании - пишем массив!
             if (!empty($icalUrl)) {
                 $sync_urls = [ 1 => [ 'url' => $icalUrl ] ];
                 update_post_meta($accomId, 'mphb_sync_urls', $sync_urls);
@@ -148,15 +144,28 @@ final class ApartmentHandler
         $attachment_ids = [];
         $uploaded_count = 0;
 
+        // RU: Двойная проверка: и MIME, и реальное расширение файла.
+        // EN: Double check: both MIME and actual file extension.
+        $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        $allowedExts      = ['jpg', 'jpeg', 'png', 'webp'];
+
         foreach ($files['name'] as $key => $value) {
             if ($uploaded_count >= 15) break;
             if ($files['error'][$key] !== UPLOAD_ERR_OK) continue;
 
             if (!empty($files['name'][$key])) {
+                
+                $fileCheck = wp_check_filetype_and_ext($files['tmp_name'][$key], $files['name'][$key]);
+                
+                if (!in_array($fileCheck['type'], $allowedMimeTypes, true) || !in_array($fileCheck['ext'], $allowedExts, true)) {
+                    continue; // Skip invalid or malicious files
+                }
+
                 $_FILES['sf_custom_upload'] = [
                     'name' => $files['name'][$key], 'type' => $files['type'][$key],
                     'tmp_name' => $files['tmp_name'][$key], 'error' => $files['error'][$key], 'size' => $files['size'][$key]
                 ];
+                
                 $attachment_id = media_handle_upload('sf_custom_upload', $postId);
                 if (!is_wp_error($attachment_id)) {
                     $attachment_ids[] = $attachment_id;
