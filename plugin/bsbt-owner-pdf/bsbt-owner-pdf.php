@@ -1,12 +1,14 @@
 <?php
+declare(strict_types=1);
+
 /**
  * Plugin Name: BSBT – Owner PDF
- * Description: Owner booking confirmation + payout summary PDF. (V2.4.0 - Dynamic E-Mail Texts)
- * Version: 2.4.0
+ * Description: Owner booking confirmation + payout summary PDF. (V2.5.0 - Nullmeldung Integrated)
+ * Version: 2.5.0
  * Author: BS Business Travelling / Stay4Fair.com
  */
 
-if (!defined('ABSPATH')) exit;
+if (!defined('ABSPATH')) { exit; }
 
 final class BSBT_Owner_PDF {
 
@@ -160,9 +162,10 @@ final class BSBT_Owner_PDF {
             }
         }
 
-        if (empty($items)) {
-            wp_die("Keine Abrechnungen für " . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . "/$year gefunden. <br><br><a href='javascript:history.back()'>Zurück</a>");
-        }
+        // ==========================================================================
+        // RU: Разрешаем генерацию пустого PDF (Nullmeldung), убрали wp_die()
+        // EN: Allow empty PDF generation (Nullmeldung), removed wp_die()
+        // ==========================================================================
 
         $filename_base = "Monatsabrechnung_{$year}_" . str_pad((string)$month, 2, '0', STR_PAD_LEFT);
 
@@ -174,21 +177,25 @@ final class BSBT_Owner_PDF {
             fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF)); 
             fputcsv($output, ['Buchung-ID', 'Apartment', 'Adresse', 'Check-in', 'Check-out', 'Gaeste', 'Modell', 'Brutto-Gesamt', 'Provision (Brutto)', 'Provision (Netto)', 'Provision (MwSt)', 'Auszahlung (Netto)'], ';');
             
-            foreach ($items as $item) {
-                fputcsv($output, [
-                    $item['booking_id'],
-                    $item['apt_title'],
-                    $item['apt_address'],
-                    date('d.m.Y', strtotime($item['check_in'])),
-                    date('d.m.Y', strtotime($item['check_out'])),
-                    $item['guests'],
-                    ($item['model'] === 'model_b' ? 'Vermittlung' : 'Direkt'),
-                    number_format($item['gross'], 2, ',', ''),
-                    number_format($item['prov_gross'], 2, ',', ''),
-                    number_format($item['prov_net'], 2, ',', ''),
-                    number_format($item['prov_vat'], 2, ',', ''),
-                    number_format($item['payout'], 2, ',', '')
-                ], ';');
+            if (!empty($items)) {
+                foreach ($items as $item) {
+                    fputcsv($output, [
+                        $item['booking_id'],
+                        $item['apt_title'],
+                        $item['apt_address'],
+                        date('d.m.Y', strtotime($item['check_in'])),
+                        date('d.m.Y', strtotime($item['check_out'])),
+                        $item['guests'],
+                        ($item['model'] === 'model_b' ? 'Vermittlung' : 'Direkt'),
+                        number_format($item['gross'], 2, ',', ''),
+                        number_format($item['prov_gross'], 2, ',', ''),
+                        number_format($item['prov_net'], 2, ',', ''),
+                        number_format($item['prov_vat'], 2, ',', ''),
+                        number_format($item['payout'], 2, ',', '')
+                    ], ';');
+                }
+            } else {
+                fputcsv($output, ['Keine Daten fuer diesen Zeitraum. (Nullmeldung)'], ';');
             }
 
             fputcsv($output, [], ';');
@@ -412,16 +419,11 @@ final class BSBT_Owner_PDF {
     private static function email_owner($bid, $to, $path) {
         if (!$to || !file_exists($path)) return false;
         
-        // RU: Берем настройки из StayFlow Settings
-        // EN: Fetch settings from StayFlow Settings
         $settings = get_option('stayflow_core_settings', []);
         
-        // Fallbacks
         $subject = $settings['owner_pdf']['email_subject'] ?? 'Buchungsbestätigung – Stay4Fair #{booking_id}';
         $msg     = $settings['owner_pdf']['email_body'] ?? "Guten Tag,\n\nanbei erhalten Sie die Bestätigung für die neue Buchung #{booking_id}.\n\nMit freundlichen Grüßen\nStay4Fair Team";
         
-        // RU: Заменяем плейсхолдер {booking_id}
-        // EN: Replace {booking_id} placeholder
         $subject = str_replace('{booking_id}', (string)$bid, $subject);
         $msg     = str_replace('{booking_id}', (string)$bid, $msg);
 
