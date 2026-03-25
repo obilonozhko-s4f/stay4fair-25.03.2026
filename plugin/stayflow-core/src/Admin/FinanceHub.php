@@ -9,11 +9,21 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 3.7.1
- * RU: Центр Финансов. Добавлена логика для платных отмен (Non-refundable) и обнуление City Tax.
+ * Version: 3.9.0
+ * RU: Центр Финансов. Строгая валидация дат и лимиты периодов (max 365 дней) для защиты от БД OOM.
+ * EN: Finance Hub. Strict date validation and period limits (max 365 days) to protect DB against OOM.
  */
 final class FinanceHub
 {
+    /**
+     * RU: Строгая проверка даты для исключения мусорных значений.
+     * EN: Strict date check to exclude garbage values.
+     */
+    private function isValidDate(string $date): bool {
+        $dt = \DateTime::createFromFormat('Y-m-d', $date);
+        return $dt !== false && $dt->format('Y-m-d') === $date;
+    }
+
     public function render(): void
     {
         $tab = isset($_GET['sftab']) ? sanitize_text_field($_GET['sftab']) : 'payouts';
@@ -54,24 +64,43 @@ final class FinanceHub
      */
     private function renderPayoutsTable(): void
     {
-        $filter_from  = isset($_GET['date_from']) ? sanitize_text_field($_GET['date_from']) : '';
-        $filter_to    = isset($_GET['date_to']) ? sanitize_text_field($_GET['date_to']) : '';
+        $filter_from  = !empty($_GET['date_from']) ? sanitize_text_field($_GET['date_from']) : date('Y-m-01');
+        $filter_to    = !empty($_GET['date_to']) ? sanitize_text_field($_GET['date_to']) : date('Y-m-t');
         $filter_model = isset($_GET['f_model']) ? sanitize_text_field($_GET['f_model']) : 'all';
 
-        // Добавлен статус cancelled для обработки платных отмен
+        // RU: Валидация дат и защита от широких диапазонов (Max 365 дней).
+        // EN: Date validation and wide range protection (Max 365 days).
+        if (!$this->isValidDate($filter_from) || !$this->isValidDate($filter_to)) {
+            $filter_from = date('Y-m-01');
+            $filter_to   = date('Y-m-t');
+        }
+
+        $d_from = new \DateTime($filter_from);
+        $d_to   = new \DateTime($filter_to);
+
+        if ($d_from > $d_to) {
+            $filter_to = $filter_from;
+            $d_to = clone $d_from;
+        }
+
+        if ($d_from->diff($d_to)->days > 365) {
+            $d_to = clone $d_from;
+            $d_to->modify('+365 days');
+            $filter_to = $d_to->format('Y-m-d');
+        }
+
         $args = [
             'post_type'      => 'mphb_booking',
             'post_status'    => ['confirmed', 'completed', 'cancelled'],
             'posts_per_page' => -1,
             'orderby'        => 'date',
-            'order'          => 'DESC'
+            'order'          => 'DESC',
+            'meta_query'     => [
+                'relation' => 'AND',
+                ['key' => '_mphb_check_in_date', 'value' => $filter_from, 'compare' => '>=', 'type' => 'DATE'],
+                ['key' => '_mphb_check_in_date', 'value' => $filter_to, 'compare' => '<=', 'type' => 'DATE']
+            ]
         ];
-
-        if (!empty($filter_from) || !empty($filter_to)) {
-            $args['meta_query'] = ['relation' => 'AND'];
-            if (!empty($filter_from)) $args['meta_query'][] = ['key' => '_mphb_check_in_date', 'value' => $filter_from, 'compare' => '>=', 'type' => 'DATE'];
-            if (!empty($filter_to))   $args['meta_query'][] = ['key' => '_mphb_check_in_date', 'value' => $filter_to, 'compare' => '<=', 'type' => 'DATE'];
-        }
 
         $bookings = get_posts($args);
         $payout_data = [];
@@ -85,9 +114,7 @@ final class FinanceHub
             if ($status === 'cancelled') {
                 $snapshot = get_post_meta($b_id, '_bsbt_financial_snapshot', true);
                 $refund_type = is_array($snapshot) ? ($snapshot['refund_type'] ?? '') : '';
-                if ($refund_type === '100%') {
-                    continue; // Пропускаем отмены со 100% возвратом гостю
-                }
+                if ($refund_type === '100%') continue; 
             }
 
             $edit_url = admin_url("post.php?post={$b_id}&action=edit");
@@ -194,8 +221,8 @@ final class FinanceHub
                 <form method="get" style="display:flex; gap:10px; align-items:center;">
                     <input type="hidden" name="page" value="stayflow-finance">
                     <input type="hidden" name="sftab" value="payouts">
-                    <label><strong>Von:</strong></label><input type="date" id="sf_date_from" name="date_from" value="<?php echo esc_attr($filter_from); ?>" style="border-radius:6px;">
-                    <label><strong>Bis:</strong></label><input type="date" id="sf_date_to" name="date_to" value="<?php echo esc_attr($filter_to); ?>" style="border-radius:6px;">
+                    <label><strong>Von:</strong></label><input type="date" id="sf_date_from" name="date_from" value="<?php echo esc_attr($filter_from); ?>" style="border-radius:6px;" required>
+                    <label><strong>Bis:</strong></label><input type="date" id="sf_date_to" name="date_to" value="<?php echo esc_attr($filter_to); ?>" style="border-radius:6px;" required>
                     <select name="f_model" style="border-radius:6px;">
                         <option value="all" <?php selected($filter_model, 'all'); ?>>Alle Modelle</option>
                         <option value="A" <?php selected($filter_model, 'A'); ?>>Modell A</option>
@@ -213,7 +240,7 @@ final class FinanceHub
 
             <div class="sf-print-only" style="display:none; margin-bottom: 20px;">
                 <h2 style="margin:0;">StayFlow Auszahlungsbericht</h2>
-                <p>Zeitraum: <?php echo $filter_from ?: 'Alle'; ?> bis <?php echo $filter_to ?: 'Alle'; ?> | Modell: <?php echo $filter_model; ?></p>
+                <p>Zeitraum: <?php echo esc_html($filter_from); ?> bis <?php echo esc_html($filter_to); ?> | Modell: <?php echo esc_html($filter_model); ?></p>
             </div>
 
             <table class="wp-list-table widefat fixed striped" id="sf-payouts-table">
@@ -285,11 +312,43 @@ final class FinanceHub
     private function renderCityTaxTable(): void
     {
         $filter_city = isset($_GET['f_city']) ? sanitize_text_field($_GET['f_city']) : 'all';
-        $filter_from = isset($_GET['tax_from']) ? sanitize_text_field($_GET['tax_from']) : '';
-        $filter_to   = isset($_GET['tax_to']) ? sanitize_text_field($_GET['tax_to']) : '';
+        $filter_from = !empty($_GET['tax_from']) ? sanitize_text_field($_GET['tax_from']) : date('Y-m-01');
+        $filter_to   = !empty($_GET['tax_to']) ? sanitize_text_field($_GET['tax_to']) : date('Y-m-t');
+
+        // RU: Валидация дат и защита от широких диапазонов (Max 365 дней).
+        // EN: Date validation and wide range protection (Max 365 days).
+        if (!$this->isValidDate($filter_from) || !$this->isValidDate($filter_to)) {
+            $filter_from = date('Y-m-01');
+            $filter_to   = date('Y-m-t');
+        }
+
+        $d_from = new \DateTime($filter_from);
+        $d_to   = new \DateTime($filter_to);
+
+        if ($d_from > $d_to) {
+            $filter_to = $filter_from;
+            $d_to = clone $d_from;
+        }
+
+        if ($d_from->diff($d_to)->days > 365) {
+            $d_to = clone $d_from;
+            $d_to->modify('+365 days');
+            $filter_to = $d_to->format('Y-m-d');
+        }
 
         // Здесь остаются только подтвержденные/завершенные (отмены не платят City Tax)
-        $args = ['post_type' => 'mphb_booking', 'post_status' => ['confirmed', 'completed'], 'posts_per_page' => -1, 'orderby' => 'date', 'order' => 'DESC'];
+        $args = [
+            'post_type'      => 'mphb_booking', 
+            'post_status'    => ['confirmed', 'completed'], 
+            'posts_per_page' => -1, 
+            'orderby'        => 'date', 
+            'order'          => 'DESC',
+            'meta_query'     => [
+                'relation' => 'AND',
+                ['key' => '_mphb_check_in_date', 'value' => $filter_from, 'compare' => '>=', 'type' => 'DATE'],
+                ['key' => '_mphb_check_in_date', 'value' => $filter_to, 'compare' => '<=', 'type' => 'DATE']
+            ]
+        ];
         $bookings = get_posts($args);
         
         $tax_data = [];
@@ -306,11 +365,8 @@ final class FinanceHub
             $date_in  = get_post_meta($b_id, 'mphb_check_in_date', true) ?: get_post_meta($b_id, '_mphb_check_in_date', true);
             $date_out = get_post_meta($b_id, 'mphb_check_out_date', true) ?: get_post_meta($b_id, '_mphb_check_out_date', true);
             
-            if (!empty($filter_from) && $date_in < $filter_from) continue;
-            if (!empty($filter_to) && $date_in > $filter_to) continue;
-            
-            $year = date('Y', strtotime($date_in));
-            $dates_str = date('d.m.Y', strtotime($date_in)) . ' - ' . date('d.m.Y', strtotime($date_out));
+            $year = date('Y', strtotime((string)$date_in));
+            $dates_str = date('d.m.Y', strtotime((string)$date_in)) . ' - ' . date('d.m.Y', strtotime((string)$date_out));
 
             $gross  = (float)get_post_meta($b_id, '_bsbt_snapshot_guest_total', true);
             $nights = (int)get_post_meta($b_id, '_bsbt_snapshot_nights', true);
@@ -391,10 +447,10 @@ final class FinanceHub
                     </select>
 
                     <label><strong>Check-in von:</strong></label>
-                    <input type="date" id="sf_tax_from" name="tax_from" value="<?php echo esc_attr($filter_from); ?>" style="border-radius:6px;">
+                    <input type="date" id="sf_tax_from" name="tax_from" value="<?php echo esc_attr($filter_from); ?>" style="border-radius:6px;" required>
 
                     <label><strong>bis:</strong></label>
-                    <input type="date" id="sf_tax_to" name="tax_to" value="<?php echo esc_attr($filter_to); ?>" style="border-radius:6px;">
+                    <input type="date" id="sf_tax_to" name="tax_to" value="<?php echo esc_attr($filter_to); ?>" style="border-radius:6px;" required>
 
                     <button type="submit" class="button button-primary" style="background:#082567;">Filtern</button>
                     <a href="?page=stayflow-finance&sftab=citytax" class="button">Reset</a>
@@ -408,7 +464,7 @@ final class FinanceHub
 
             <div class="sf-print-only" style="display:none; margin-bottom: 20px;">
                 <h2 style="margin:0;">Beherbergungsteuer Bericht</h2>
-                <p>Stadt: <?php echo $filter_city === 'all' ? 'Alle' : $filter_city; ?> | Zeitraum: <?php echo $filter_from ?: 'Alle'; ?> bis <?php echo $filter_to ?: 'Alle'; ?></p>
+                <p>Stadt: <?php echo $filter_city === 'all' ? 'Alle' : esc_html($filter_city); ?> | Zeitraum: <?php echo esc_html($filter_from); ?> bis <?php echo esc_html($filter_to); ?></p>
             </div>
 
             <table class="wp-list-table widefat fixed striped" id="sf-citytax-table">
@@ -436,7 +492,7 @@ final class FinanceHub
                                 <strong>Objekt-ID: <?php echo $t['room_id']; ?></strong><br>
                                 <small style="color:#64748b;"><?php echo esc_html((string)$t['address']); ?></small>
                             </td>
-                            <td><span style="background:#f1f5f9; padding:2px 6px; border-radius:4px; font-size:11px;"><b><?php echo $t['city']; ?></b></span></td>
+                            <td><span style="background:#f1f5f9; padding:2px 6px; border-radius:4px; font-size:11px;"><b><?php echo esc_html($t['city']); ?></b></span></td>
                             <td><?php echo $t['adults']; ?> Erw. × <?php echo $t['nights']; ?> Nächte</td>
                             <td>€<?php echo number_format($t['ppn'], 2, ',', '.'); ?></td>
                             <td>€<?php echo number_format($t['rate'], 2, ',', '.'); ?></td>
@@ -461,8 +517,28 @@ final class FinanceHub
      */
     private function renderDac7Table(): void
     {
-        // Добавлен статус cancelled для обработки платных отмен
-        $args = ['post_type' => 'mphb_booking', 'post_status' => ['confirmed', 'completed', 'cancelled'], 'posts_per_page' => -1];
+        $filter_year = isset($_GET['dac7_year']) ? (int)$_GET['dac7_year'] : (int)date('Y');
+        
+        // RU: Ограничение диапазона. Мы не даем тянуть мусорный год.
+        // EN: Range limitation. We do not allow querying a garbage year.
+        $currentY = (int)date('Y');
+        if ($filter_year < 2023 || $filter_year > $currentY + 1) {
+            $filter_year = $currentY;
+        }
+        
+        $args = [
+            'post_type'      => 'mphb_booking', 
+            'post_status'    => ['confirmed', 'completed', 'cancelled'], 
+            'posts_per_page' => -1,
+            'meta_query'     => [
+                [
+                    'key'     => '_mphb_check_in_date',
+                    'value'   => [$filter_year . '-01-01', $filter_year . '-12-31'],
+                    'compare' => 'BETWEEN',
+                    'type'    => 'DATE'
+                ]
+            ]
+        ];
         $bookings = get_posts($args);
         $hosts = [];
 
@@ -552,6 +628,21 @@ final class FinanceHub
                     <h3 style="margin:0;">DAC7 (PStTG) Export - Modell B</h3>
                     <p class="description">Aggregierte Daten für das Bundeszentralamt für Steuern (BZSt).</p>
                 </div>
+                
+                <form method="get" style="display:flex; gap:10px; align-items:center;">
+                    <input type="hidden" name="page" value="stayflow-finance">
+                    <input type="hidden" name="sftab" value="dac7">
+                    <label><strong>Jahr:</strong></label>
+                    <select name="dac7_year" style="border-radius:6px;">
+                        <?php 
+                        for($y = $currentY; $y >= 2023; $y--) {
+                            echo '<option value="'.$y.'" '.selected($filter_year, $y, false).'>'.$y.'</option>';
+                        }
+                        ?>
+                    </select>
+                    <button type="submit" class="button button-primary" style="background:#082567;">Filtern</button>
+                </form>
+
                 <button onclick="exportDac7CSV()" class="button button-primary sf-no-print" style="background:#10b981; border:none;">📁 CSV Export</button>
             </div>
 
@@ -569,7 +660,7 @@ final class FinanceHub
                 </thead>
                 <tbody>
                     <?php if (empty($hosts)): ?>
-                        <tr><td colspan="7" style="text-align:center; padding: 20px;">Keine Modell B Daten gefunden.</td></tr>
+                        <tr><td colspan="7" style="text-align:center; padding: 20px;">Keine Modell B Daten für dieses Jahr gefunden.</td></tr>
                     <?php else: ?>
                         <?php foreach ($hosts as $h): ?>
                         <tr>
