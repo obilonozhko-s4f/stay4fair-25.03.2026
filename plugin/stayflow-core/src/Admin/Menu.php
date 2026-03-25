@@ -12,9 +12,9 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 2.18.0
- * RU: Управление меню. Добавлена настройка Support E-Mail.
- * EN: Menu management. Support E-Mail setting added.
+ * Version: 2.19.0
+ * RU: Управление меню. Добавлена настройка WhatsApp / Telefon для саппорта.
+ * EN: Menu management. Support WhatsApp / Phone setting added.
  */
 final class Menu
 {
@@ -148,6 +148,13 @@ final class Menu
                                     <p class="description">An diese E-Mail werden Support-Anfragen der Eigentümer gesendet. Bleibt dieses Feld leer, wird die Standard-Admin-E-Mail (<?php echo esc_html(get_option('admin_email')); ?>) verwendet.</p>
                                 </td>
                             </tr>
+                            <tr>
+                                <th scope="row"><label>Support WhatsApp / Telefon</label></th>
+                                <td>
+                                    <input type="text" name="<?php echo $optKey; ?>[support_phone]" value="<?php echo esc_attr((string)($options['support_phone'] ?? '')); ?>" class="regular-text" placeholder="4917612345678">
+                                    <p class="description">Nummer für den WhatsApp-Button (im int. Format, z.B. 4917624615269). Wenn leer, wird versucht, die Telefonnummer des Haupt-Admins abzurufen.</p>
+                                </td>
+                            </tr>
                         </table>
                     </div>
 
@@ -175,9 +182,9 @@ final class Menu
         <?php
     }
 
-    public function renderPolicies(): void { /* ... Оставлено как было, код не менялся ... */ }
-    public function renderContentRegistry(): void { /* ... Оставлено как было, код не менялся ... */ }
-    public function renderSiteNotice(): void { /* ... Оставлено как было, код не менялся ... */ }
+    public function renderPolicies(): void { /* ... */ }
+    public function renderContentRegistry(): void { /* ... */ }
+    public function renderSiteNotice(): void { /* ... */ }
 
     private function adminStyles(): void
     {
@@ -190,6 +197,7 @@ final class Menu
             .sf-settings-card h3 { margin: 0 0 10px 0; color: #082567; font-size: 16px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
             .form-table th { font-weight: 600; color: #1e293b; padding-left: 0; width: 200px; }
             .regular-text, .large-text { border-radius: 6px; border: 1px solid #cbd5e1; padding: 6px 10px; width: 100%; box-sizing: border-box; }
+            .regular-text:focus, .large-text:focus { border-color: #082567; box-shadow: 0 0 0 1px #082567; }
         </style>
         <?php
     }
