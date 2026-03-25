@@ -1,0 +1,93 @@
+<?php
+/**
+ * Plugin Name: Stay4Fair Maintenance Mode
+ * Description: Shows Coming Soon page to visitors while allowing admins and whitelisted users to access the full site.
+ * Version: 1.2.0
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+add_action('template_redirect', function () {
+    if (is_admin()) {
+        return;
+    }
+
+    if (defined('DOING_AJAX') && DOING_AJAX) {
+        return;
+    }
+
+    if (defined('REST_REQUEST') && REST_REQUEST) {
+        return;
+    }
+
+    $requestUri = $_SERVER['REQUEST_URI'] ?? '';
+
+    if (
+        strpos($requestUri, '/wp-login.php') !== false ||
+        strpos($requestUri, '/wp-admin') !== false
+    ) {
+        return;
+    }
+
+    if (current_user_can('manage_options')) {
+        return;
+    }
+
+    $allowedEmails = [
+        'admin@bs-travelling.com',
+        'business@bs-travelling.com',
+    ];
+
+    $currentUser = wp_get_current_user();
+
+    if ($currentUser instanceof WP_User && $currentUser->exists()) {
+        $userEmail = strtolower(trim((string) $currentUser->user_email));
+
+        if (in_array($userEmail, $allowedEmails, true)) {
+            return;
+        }
+    }
+
+    $page = get_page_by_path('coming-soon');
+
+    if (!$page || $page->post_status !== 'publish') {
+        return;
+    }
+
+    if (is_page($page->ID)) {
+        status_header(200);
+        return;
+    }
+
+    global $wp_query, $post;
+
+    $post = $page;
+    $wp_query->post = $page;
+    $wp_query->posts = [$page];
+    $wp_query->queried_object = $page;
+    $wp_query->queried_object_id = $page->ID;
+    $wp_query->is_page = true;
+    $wp_query->is_singular = true;
+    $wp_query->is_home = false;
+    $wp_query->is_front_page = false;
+    $wp_query->is_404 = false;
+
+    setup_postdata($post);
+
+    status_header(503);
+
+    $template = get_page_template();
+
+    if (!$template) {
+        $template = locate_template(['page.php', 'singular.php', 'index.php']);
+    }
+
+    if ($template) {
+        include $template;
+    }
+
+    wp_reset_postdata();
+    exit;
+}, 1);
