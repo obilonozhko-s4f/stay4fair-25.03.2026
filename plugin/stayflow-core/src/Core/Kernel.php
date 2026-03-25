@@ -1,9 +1,9 @@
 <?php
 /**
  * File: /stay4fair.com/wp-content/plugins/stayflow-core/src/Core/Kernel.php
- * Version: 1.1.5
- * RU: Главное ядро инициализации плагина с поддержкой Onboarding, Calendar Sync, Owner Profile и Site Notice.
- * EN: Main initialization kernel of the plugin with Onboarding, Calendar Sync, Owner Profile and Site Notice support.
+ * Version: 1.1.6
+ * RU: Главное ядро инициализации плагина. Добавлен SupportProvider.
+ * EN: Main initialization kernel. SupportProvider added.
  */
 
 declare(strict_types=1);
@@ -23,7 +23,8 @@ use StayFlow\BusinessModel\InvoiceModifier;
 use StayFlow\Api\CalendarApiController;
 use StayFlow\Integration\CancelBookingShortcode;
 use StayFlow\Booking\CancellationNotificationHandler;
-use StayFlow\Support\SiteNoticeProvider; // <-- Подключаем новый модуль
+use StayFlow\Support\SiteNoticeProvider;
+use StayFlow\Support\SupportProvider; // <-- Подключаем саппорт
 
 if (!defined('ABSPATH')) {
     exit;
@@ -31,10 +32,6 @@ if (!defined('ABSPATH')) {
 
 final class Kernel
 {
-    /**
-     * RU: Инициализация всех модулей плагина.
-     * EN: Booting all plugin modules.
-     */
     public function boot(): void
     {
         $settingsStore    = new SettingsStore();
@@ -48,34 +45,22 @@ final class Kernel
         
         $calendarApi->register();
 
-        // RU: Регистрация CPT / EN: CPT Registration
         add_action('init', [$ownerPostType, 'register']);
-        
-        // RU: Инициализируем хуки для квартиры (метабоксы & сохранение)
         $propertyMeta->register(); 
-
-        // RU: Инициализируем синхронизацию тарифов
         $rateSync->register();
-
-        // RU: Инициализируем вывод шорткода отмены бронирования
         $policyAdapter->register();
 
-        // RU: Регистрация настроек и меню
         add_action('admin_init', [$settingsStore, 'register']);
         add_action('admin_init', [$featureFlagStore, 'register']);
         add_action('admin_menu', [$menu, 'register']);
 
-        // RU: Запуск бизнес-логики и налогов
         (new BusinessModelServiceProvider())->boot();
 
-        // RU: Инициализация модуля регистрации новых владельцев (Onboarding)
-        // EN: Initialize owner onboarding module
         (new OnboardingProvider())->register();
         (new OnboardingHandler($settingsStore))->register();
         (new \StayFlow\Onboarding\VerificationHandler())->register();
         (new \StayFlow\Integration\OwnerStepsShortcode())->register();
         
-        // RU: CPT Провайдеры и Обработчики (Квартиры)
         (new \StayFlow\CPT\ApartmentProvider())->register();
         (new \StayFlow\CPT\ApartmentHandler())->register();
         (new \StayFlow\Admin\AccessGuard())->register();
@@ -85,20 +70,13 @@ final class Kernel
         (new \StayFlow\CPT\ApartmentEditHandler())->register();
         (new \StayFlow\CPT\ApartmentListProvider())->register();
         
-        // RU: Модуль Ваучеров (Vouchers)
         (new \StayFlow\Voucher\VoucherSender())->register();
         (new \StayFlow\Voucher\VoucherMetabox())->register();
         (new \StayFlow\CPT\OwnerCalendarProvider())->register();
 
-        // =========================================================
-        // RU: МОДУЛИ ОТМЕНЫ И БРОНИРОВАНИЯ (CANCELLATION & BOOKING)
-        // EN: CANCELLATION & BOOKING MODULES
-        // =========================================================
         (new CancelBookingShortcode())->register();
         (new CancellationNotificationHandler())->register();
         
-        // RU: Модуль Профиля Владельца (Owner Profile)
-        // EN: Owner Profile Module
         if (class_exists('\StayFlow\CPT\OwnerProfileProvider')) {
             (new \StayFlow\CPT\OwnerProfileProvider())->register();
         }
@@ -110,16 +88,12 @@ final class Kernel
             (new \StayFlow\Integration\ContractingPartyShortcode())->register();
         }
 
-        // =========================================================
-        // RU: ИНИЦИАЛИЗАЦИЯ ИНВОЙСОВ
-        // EN: INVOICES INITIALIZATION
-        // =========================================================
         add_action('init', [InvoiceModifier::class, 'init']);
 
-        // =========================================================
-        // RU: ГЛОБАЛЬНОЕ УВЕДОМЛЕНИЕ (ПОПАП)
-        // EN: GLOBAL SITE NOTICE (POPUP)
-        // =========================================================
         (new SiteNoticeProvider())->register();
+        
+        // RU: РЕГИСТРАЦИЯ ЦЕНТРА ПОДДЕРЖКИ
+        // EN: SUPPORT CENTER REGISTRATION
+        (new SupportProvider())->register();
     }
 }
