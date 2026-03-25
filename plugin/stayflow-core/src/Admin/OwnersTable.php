@@ -15,9 +15,9 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 1.14.0
- * RU: CRM-панель владельцев. Прямая генерация ссылки User Switching.
- * EN: Owners CRM panel. Direct generation of User Switching link.
+ * Version: 1.16.0
+ * RU: CRM-панель владельцев. Идеальная гигиена - esc_attr для всех tooltips и (string) для GET-параметров.
+ * EN: Owners CRM panel. Perfect hygiene - esc_attr for all tooltips and (string) for GET params.
  */
 final class OwnersTable
 {
@@ -28,7 +28,7 @@ final class OwnersTable
     public function render(): void
     {
         // RU: Получаем поисковый запрос / EN: Get search query
-        $search = isset($_GET['s']) ? sanitize_text_field($_GET['s']) : '';
+        $search = isset($_GET['s']) ? sanitize_text_field((string)$_GET['s']) : '';
         
         // RU: Базовые аргументы поиска (роль owner)
         // EN: Base search arguments (owner role)
@@ -126,14 +126,15 @@ final class OwnersTable
         $userId = $user->ID;
         $status = get_user_meta($userId, '_sf_account_status', true) ?: 'pending';
         
-        // RU: Статистика объектов MPHB / EN: MPHB property statistics
+        // RU: Статистика объектов MPHB. Строгое сравнение строк %s.
+        // EN: MPHB property statistics. Strict string comparison %s.
         global $wpdb;
         $apts = $wpdb->get_results($wpdb->prepare("
             SELECT post_status, ID FROM {$wpdb->posts} p
             LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'bsbt_owner_id'
             WHERE p.post_type = 'mphb_room_type' 
-            AND (p.post_author = %d OR pm.meta_value = %d)
-        ", $userId, $userId));
+            AND (p.post_author = %d OR pm.meta_value = %s)
+        ", $userId, (string)$userId));
 
         $counts = ['publish' => 0];
         $models = [];
@@ -172,9 +173,9 @@ final class OwnersTable
             </td>
             <td>
                 <div class="sf-compliance-icons">
-                    <span class="sf-tooltip-trigger <?php echo $iban ? 'is-ok' : 'is-empty'; ?>" data-info="IBAN: <?php echo $iban ?: 'Missing'; ?>">🏦</span>
-                    <span class="sf-tooltip-trigger <?php echo $tax ? 'is-ok' : 'is-empty'; ?>" data-info="Tax No: <?php echo $tax ?: 'Missing'; ?>">📄</span>
-                    <span class="sf-tooltip-trigger <?php echo $vat ? 'is-ok' : 'is-empty'; ?>" data-info="VAT ID: <?php echo $vat ?: 'Missing'; ?>">🏢</span>
+                    <span class="sf-tooltip-trigger <?php echo $iban ? 'is-ok' : 'is-empty'; ?>" data-info="<?php echo esc_attr('IBAN: ' . ($iban ?: 'Missing')); ?>">🏦</span>
+                    <span class="sf-tooltip-trigger <?php echo $tax ? 'is-ok' : 'is-empty'; ?>" data-info="<?php echo esc_attr('Tax No: ' . ($tax ?: 'Missing')); ?>">📄</span>
+                    <span class="sf-tooltip-trigger <?php echo $vat ? 'is-ok' : 'is-empty'; ?>" data-info="<?php echo esc_attr('VAT ID: ' . ($vat ?: 'Missing')); ?>">🏢</span>
                 </div>
             </td>
             <td>
@@ -185,10 +186,8 @@ final class OwnersTable
                     /**
                      * RU: ПРЯМАЯ ГЕНЕРАЦИЯ ССЫЛКИ ДЛЯ USER SWITCHING
                      * EN: DIRECT GENERATION OF USER SWITCHING LINK
-                     * Если плагин активен и это не твой собственный аккаунт, мы сами собираем защищенную ссылку.
                      */
                     if (class_exists('user_switching') && $userId !== get_current_user_id()) : 
-                        // Собираем правильный URL с nonce-защитой плагина
                         $switch_url = wp_nonce_url(
                             add_query_arg(['action' => 'switch_to_user', 'user_id' => $userId], admin_url()),
                             "switch_to_user_{$userId}"
