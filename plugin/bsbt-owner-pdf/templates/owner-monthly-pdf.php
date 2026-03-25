@@ -90,34 +90,43 @@ h1 { font-size: 18px; margin: 12px 0 6px 0; color: #082567; border-bottom: 2px s
         </tr>
     </thead>
     <tbody>
-        <?php foreach ($d['items'] as $item): ?>
+        <?php if (empty($d['items'])): ?>
             <tr>
-                <td>#<?php echo $e($item['booking_id']); ?></td>
-                <td>
-                    <strong><?php echo $e($item['apt_title']); ?></strong><br>
-                    <span style="font-size: 9px; color: #64748b;"><?php echo $e($item['apt_address']); ?></span>
+                <td colspan="7" style="text-align: center; padding: 30px; font-size: 14px; color: #64748b; font-weight: bold;">
+                    In diesem Zeitraum gab es keine Buchungen oder Auszahlungen.<br>
+                    <span style="font-size: 11px; font-weight: normal;">(Nullmeldung)</span>
                 </td>
-                <td><?php echo $e(date('d.m.y', strtotime($item['check_in']))); ?> – <?php echo $e(date('d.m.y', strtotime($item['check_out']))); ?></td>
-                <td class="text-right"><?php echo $e($item['guests']); ?></td>
-                <td class="text-right"><?php echo $e(number_format((float)$item['gross'], 2, ',', '.')); ?> €</td>
-                
-                <?php if ($item['model'] === 'model_b'): ?>
-                    <td class="text-right">
-                        <strong><?php echo $e(number_format((float)$item['prov_gross'], 2, ',', '.')); ?> €</strong><br>
-                        <?php if ((float)$item['prov_gross'] > 0): ?>
-                        <span style="font-size:8px; color:#64748b; font-weight:normal; line-height: 1.2; display: inline-block; margin-top: 3px;">
-                            Netto: <?php echo $e(number_format((float)$item['prov_net'], 2, ',', '.')); ?> €<br>
-                            19% MwSt: <?php echo $e(number_format((float)$item['prov_vat'], 2, ',', '.')); ?> €
-                        </span>
-                        <?php endif; ?>
-                    </td>
-                <?php else: ?>
-                    <td class="text-right" style="color:#94a3b8;">— (Modell A)</td>
-                <?php endif; ?>
-
-                <td class="text-right highlight"><?php echo $e(number_format((float)$item['payout'], 2, ',', '.')); ?> €</td>
             </tr>
-        <?php endforeach; ?>
+        <?php else: ?>
+            <?php foreach ($d['items'] as $item): ?>
+                <tr>
+                    <td>#<?php echo $e($item['booking_id']); ?></td>
+                    <td>
+                        <strong><?php echo $e($item['apt_title']); ?></strong><br>
+                        <span style="font-size: 9px; color: #64748b;"><?php echo $e($item['apt_address']); ?></span>
+                    </td>
+                    <td><?php echo $e(date('d.m.y', strtotime($item['check_in']))); ?> – <?php echo $e(date('d.m.y', strtotime($item['check_out']))); ?></td>
+                    <td class="text-right"><?php echo $e($item['guests']); ?></td>
+                    <td class="text-right"><?php echo $e(number_format((float)$item['gross'], 2, ',', '.')); ?> €</td>
+                    
+                    <?php if ($item['model'] === 'model_b'): ?>
+                        <td class="text-right">
+                            <strong><?php echo $e(number_format((float)$item['prov_gross'], 2, ',', '.')); ?> €</strong><br>
+                            <?php if ((float)$item['prov_gross'] > 0): ?>
+                            <span style="font-size:8px; color:#64748b; font-weight:normal; line-height: 1.2; display: inline-block; margin-top: 3px;">
+                                Netto: <?php echo $e(number_format((float)$item['prov_net'], 2, ',', '.')); ?> €<br>
+                                19% MwSt: <?php echo $e(number_format((float)$item['prov_vat'], 2, ',', '.')); ?> €
+                            </span>
+                            <?php endif; ?>
+                        </td>
+                    <?php else: ?>
+                        <td class="text-right" style="color:#94a3b8;">— (Modell A)</td>
+                    <?php endif; ?>
+
+                    <td class="text-right highlight"><?php echo $e(number_format((float)$item['payout'], 2, ',', '.')); ?> €</td>
+                </tr>
+            <?php endforeach; ?>
+        <?php endif; ?>
         
         <tr class="total-row">
             <td colspan="4" class="text-right">GESAMT FÜR <?php echo $e($d['month'] . '/' . $d['year']); ?>:</td>
@@ -140,13 +149,11 @@ h1 { font-size: 18px; margin: 12px 0 6px 0; color: #082567; border-bottom: 2px s
     <?php 
     $contentReg = get_option('stayflow_registry_content', []);
     
-    // Если администратор настроил текст в админке, выводим его. Иначе строим дефолтный на основе данных $d.
     if (!empty($contentReg['tax_notice_monthly'])) {
         $tax_text = $contentReg['tax_notice_monthly'];
         $tax_text = str_replace('<p>', '<p style="margin:0 0 10px 0;">', $tax_text);
         echo wp_kses_post($tax_text);
     } else {
-        // Fallback на старую логику, если в базе пусто
         echo '<p style="margin:0 0 10px 0;">Die Auszahlung erfolgt in der Regel innerhalb von 3–7 Werktagen nach Abreise des Gastes.</p>';
         if ($d['has_model_a']) {
             echo '<p style="margin:0 0 10px 0;"><strong>Für Buchungen nach Modell A (Direkt):</strong> Die Abführung der Beherbergungsteuer (City-Tax) für diese Buchungen wurde von Stay4Fair übernommen. Für die Versteuerung Ihrer Einkünfte sind Sie selbst verantwortlich.</p>';
