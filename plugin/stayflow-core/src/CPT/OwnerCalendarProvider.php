@@ -9,19 +9,25 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 2.3.0
+ * Version: 2.3.1
  * RU: Провайдер интерактивного календаря.
+ * - [NEW]: Блокировка кнопки и функционала "Preis ändern" для квартир с бизнес-моделью А.
  * - [NEW]: Возвращены кнопки-стрелки (← →) для быстрой навигации по месяцам.
- * - [NEW]: Умный сдвиг дат: если выбран полный месяц, стрелка переключает на следующий полный месяц.
- * - [FIX]: Мобильная верстка экшен-бара и фильтров дат выровнена.
+ * EN: Calendar provider with price editing lock for Model A apartments.
  */
 final class OwnerCalendarProvider
 {
+    // ==========================================================================
+    // РЕГИСТРАЦИЯ ШОРТКОДА / REGISTER SHORTCODE
+    // ==========================================================================
     public function register(): void
     {
         add_shortcode('sf_owner_calendar', [$this, 'renderCalendar']);
     }
 
+    // ==========================================================================
+    // ВЫВОД КАЛЕНДАРЯ / RENDER CALENDAR
+    // ==========================================================================
     public function renderCalendar(): string
     {
         if (!is_user_logged_in()) {
@@ -212,6 +218,14 @@ final class OwnerCalendarProvider
 
         <script>
         const editBaseUrl = '<?php echo esc_url(home_url('/edit-apartment/')); ?>';
+        
+        // RU: Генерируем маппинг "Apartment ID -> Business Model"
+        // EN: Generate mapping "Apartment ID -> Business Model"
+        window.sfAptModels = {};
+        <?php foreach ($apartments as $apt): 
+            $model = get_post_meta($apt->ID, '_bsbt_business_model', true) ?: 'model_a';
+            echo "window.sfAptModels['{$apt->ID}'] = '{$model}';\n";
+        endforeach; ?>
 
         function closeModals() { document.querySelectorAll('.sf-modal-overlay').forEach(m => m.classList.remove('active')); }
         
@@ -227,6 +241,22 @@ final class OwnerCalendarProvider
 
         function openPriceModal() {
             if(window.sfSelectedCells.size === 0) return alert('Bitte wählen Sie zuerst freie Daten im Kalender aus.');
+            
+            // RU: Проверка на Модель А перед открытием окна
+            // EN: Check for Model A before opening the price modal
+            let hasModelA = false;
+            window.sfSelectedCells.forEach(key => {
+                let parts = key.split('|');
+                if(window.sfAptModels[parts[0]] === 'model_a') {
+                    hasModelA = true;
+                }
+            });
+
+            if (hasModelA) {
+                alert('Preisanpassungen sind für Modell A (Direkt) nicht verfügbar. Bitte wählen Sie nur Apartments im Modell B.');
+                return;
+            }
+
             document.getElementById('modal-price').classList.add('active');
         }
 
@@ -241,6 +271,7 @@ final class OwnerCalendarProvider
 
             const containerEl = document.getElementById('sf-cal-dynamic-container');
             const loaderEl = document.getElementById('sf-cal-loader');
+            const btnPrice = document.getElementById('btn-price');
             const daysDe = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 
             // Инициализация дат по умолчанию (текущий месяц)
@@ -259,6 +290,15 @@ final class OwnerCalendarProvider
             function showLoader() { loaderEl.style.display = 'inline-block'; }
             function hideLoader() { loaderEl.style.display = 'none'; }
 
+            // RU: Управление отображением кнопки цены при смене дропдауна
+            function togglePriceButtonVisibility() {
+                if (currentAptId !== 'all' && window.sfAptModels[currentAptId] === 'model_a') {
+                    btnPrice.style.display = 'none';
+                } else {
+                    btnPrice.style.display = 'inline-flex';
+                }
+            }
+
             // RU: Логика умного сдвига месяцев (Стрелки)
             function shiftMonth(direction) {
                 if (!inputFrom.value || !inputTo.value) return;
@@ -270,13 +310,11 @@ final class OwnerCalendarProvider
                 let isLastDay = dTo.getDate() === new Date(dTo.getFullYear(), dTo.getMonth() + 1, 0).getDate();
 
                 if (isFirstDay && isLastDay) {
-                    // Идеально ровный месяц -> переключаем на следующий полный месяц
                     let newFrom = new Date(dFrom.getFullYear(), dFrom.getMonth() + direction, 1);
                     let newTo = new Date(newFrom.getFullYear(), newFrom.getMonth() + 1, 0);
                     inputFrom.value = newFrom.getFullYear() + '-' + String(newFrom.getMonth()+1).padStart(2,'0') + '-01';
                     inputTo.value = newTo.getFullYear() + '-' + String(newTo.getMonth()+1).padStart(2,'0') + '-' + String(newTo.getDate()).padStart(2,'0');
                 } else {
-                    // Кастомный диапазон (выставка) -> сдвигаем даты ровно на 1 месяц
                     dFrom.setMonth(dFrom.getMonth() + direction);
                     dTo.setMonth(dTo.getMonth() + direction);
                     let pad = (n) => String(n).padStart(2,'0');
@@ -483,7 +521,13 @@ final class OwnerCalendarProvider
             }
 
             document.addEventListener('mouseup', () => isDragging = false);
-            document.getElementById('sf-apt-select').addEventListener('change', (e) => { currentAptId = e.target.value; fetchCalendar(); });
+            
+            document.getElementById('sf-apt-select').addEventListener('change', (e) => { 
+                currentAptId = e.target.value; 
+                togglePriceButtonVisibility(); // Check UI state on change
+                fetchCalendar(); 
+            });
+
             document.getElementById('sf-btn-filter').addEventListener('click', fetchCalendar);
 
             function getGroupedSelections() {
@@ -549,6 +593,7 @@ final class OwnerCalendarProvider
                 } catch(e) { console.error(e); hideLoader(); }
             });
 
+            togglePriceButtonVisibility(); // Initial check
             fetchCalendar();
         });
         </script>
