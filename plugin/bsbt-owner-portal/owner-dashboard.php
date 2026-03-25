@@ -3,25 +3,19 @@ declare(strict_types=1);
 
 /**
  * Plugin Name: BSBT – Owner Dashboard (Total 3D Aligned)
- * Version: 18.1.0
- * RU: Дашборд владельца (Интегрирован алерт профиля DAC7 + Индикатор новых бронирований).
- * EN: Owner dashboard (Profile DAC7 alert + New bookings indicator integrated).
+ * Version: 18.2.0
+ * RU: Дашборд владельца. Ссылка Support обновлена на /owner-support/.
+ * EN: Owner dashboard. Support link updated to /owner-support/.
  */
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 final class BSBT_Aligned_3D_Dashboard {
 
-    /* ==========================================================================
-     * CONSTRUCTOR / КОНСТРУКТОР
-     * ========================================================================== */
     public function __construct() {
         add_shortcode( 'bsbt_owner_dashboard', [ $this, 'render' ] );
     }
 
-    /* ==========================================================================
-     * RENDER / ВЫВОД ДАШБОРДА
-     * ========================================================================== */
     public function render() {
 
         if ( ! is_user_logged_in() ) {
@@ -34,8 +28,6 @@ final class BSBT_Aligned_3D_Dashboard {
         $navy = '#082567'; 
         $gold = '#E0B849'; 
         
-        // RU: Подсчет квартир текущего юзера (любого статуса)
-        // EN: Count apartments of the current user
         $apts = get_posts([
             'post_type'      => 'mphb_room_type',
             'author'         => $user->ID,
@@ -44,24 +36,18 @@ final class BSBT_Aligned_3D_Dashboard {
         ]);
         $apartments_count = count($apts);
 
-        // RU: Проверка заполненности профиля (IBAN + Steuernummer)
-        // EN: Check profile completion (DAC7)
         $profile_action_required = false;
         if (class_exists('\StayFlow\CPT\OwnerProfileProvider')) {
             $profile_action_required = \StayFlow\CPT\OwnerProfileProvider::isActionRequired($user->ID);
         }
 
-        // ==========================================================================
-        // RU: Поиск новых, не отвеченных заявок на бронирование
-        // EN: Search for new, unreplied booking requests
-        // ==========================================================================
         $has_new_bookings = false;
         if (class_exists('WP_Query')) {
             try {
                 $recent_bookings = new WP_Query([
                     'post_type'      => 'mphb_booking',
                     'post_status'    => 'any',
-                    'posts_per_page' => 20, // Check recent to avoid heavy DB load
+                    'posts_per_page' => 20, 
                     'fields'         => 'ids',
                     'orderby'        => 'date',
                     'order'          => 'DESC',
@@ -83,50 +69,26 @@ final class BSBT_Aligned_3D_Dashboard {
                         }
                     }
                 }
-            } catch (\Throwable $e) {
-                // RU: Гасим ошибку, чтобы не поломать дашборд
-                // EN: Suppress error to avoid breaking the dashboard
-            }
+            } catch (\Throwable $e) {}
         }
         
         ob_start(); ?>
 
         <style>
             .bsbt-3d-btn {
-                position: relative !important;
-                overflow: hidden !important;
-                border-radius: 10px !important;
-                border: none !important;
+                position: relative !important; overflow: hidden !important; border-radius: 10px !important; border: none !important;
                 box-shadow: 0 14px 28px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.25), inset 0 -5px 10px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 0 0 1px rgba(255,255,255,0.06) !important;
-                transition: all 0.25s ease !important;
-                cursor: pointer !important;
-                display: inline-block;
-                padding: 12px 24px;
-                background-color: <?php echo $gold; ?> !important;
-                color: <?php echo $navy; ?> !important;
+                transition: all 0.25s ease !important; cursor: pointer !important; display: inline-block; padding: 12px 24px;
+                background-color: <?php echo $gold; ?> !important; color: <?php echo $navy; ?> !important;
                 background-image: linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.1) 55%, rgba(0,0,0,0.18) 100%) !important;
-                background-blend-mode: overlay;
-                font-weight: 700;
-                text-decoration: none;
-                text-align: center;
+                background-blend-mode: overlay; font-weight: 700; text-decoration: none; text-align: center;
             }
-
             .bsbt-3d-btn::before {
-                content: "" !important;
-                position: absolute !important;
-                top: 2% !important; left: 6% !important; width: 88% !important; height: 55% !important;
+                content: "" !important; position: absolute !important; top: 2% !important; left: 6% !important; width: 88% !important; height: 55% !important;
                 background: radial-gradient(ellipse at center, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.00) 72%) !important;
-                transform: scaleY(0.48) !important;
-                filter: blur(5px) !important;
-                opacity: 0.55 !important;
-                z-index: 1 !important;
+                transform: scaleY(0.48) !important; filter: blur(5px) !important; opacity: 0.55 !important; z-index: 1 !important;
             }
-
-            .bsbt-3d-btn:hover {
-                background-color: <?php echo $navy; ?> !important;
-                color: <?php echo $gold; ?> !important;
-                transform: translateY(-2px) !important;
-            }
+            .bsbt-3d-btn:hover { background-color: <?php echo $navy; ?> !important; color: <?php echo $gold; ?> !important; transform: translateY(-2px) !important; }
 
             .bsbt-viewport { padding-top: 18vh; padding-bottom: 40px; background: #ffffff; width: 100%; box-sizing: border-box; overflow-x: hidden; }
             #bsbt-container { font-family: 'Segoe UI', Roboto, sans-serif; max-width: 1150px; margin: 0 auto; padding: 0 25px; box-sizing: border-box; }
@@ -194,13 +156,14 @@ final class BSBT_Aligned_3D_Dashboard {
 
                 <div class="bsbt-grid">
                     <?php
+                    // RU: Ссылка на Support изменена на /owner-support/
                     $items = [
                         ['Meine Buchungen', '📅', '/owner-bookings/'],
                         ['Apartments', '🏢', '#'], 
                         ['Finanzen', '💳', '/owner-dashboard-finanzen/'],
                         ['Kalender', '🗓️', '/owner-calendar/'],
                         ['Mein Profil', '👤', '/owner-profile/'], 
-                        ['Support', '🎧', '#']
+                        ['Support', '🎧', '/owner-support/'] 
                     ];                    
                     
                     foreach ($items as $item) : 
@@ -209,7 +172,6 @@ final class BSBT_Aligned_3D_Dashboard {
                         $action_text = 'Öffnen';
                         $show_red_dot = false;
 
-                        // RU: Логика маршрутизации для Apartments
                         if ($item[0] === 'Apartments') {
                             if ($apartments_count === 0) {
                                 $link = home_url('/add-apartment/');
@@ -222,18 +184,16 @@ final class BSBT_Aligned_3D_Dashboard {
                             }
                         }
 
-                        // RU: Логика алерта для Профиля (DAC7)
                         if ($item[0] === 'Mein Profil' && $profile_action_required) {
                             $class = 'bsbt-glass-card sf-danger-tile-pulse';
                             $action_text = 'Daten fehlen (DAC7)';
                             $show_red_dot = true;
                         }
 
-                        // RU: Логика алерта для Новых бронирований
                         if ($item[0] === 'Meine Buchungen' && $has_new_bookings) {
                             $class = 'bsbt-glass-card sf-success-tile-pulse';
                             $action_text = 'Neue Anfrage!';
-                            $show_red_dot = true; // Отображаем красную точку тоже для привлечения внимания
+                            $show_red_dot = true;
                         }
                     ?>
                         <a href="<?php echo esc_url($link); ?>" class="<?php echo esc_attr($class); ?>">
