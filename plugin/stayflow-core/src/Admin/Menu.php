@@ -12,9 +12,9 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Version: 2.14.0
- * RU: Управление меню. Добавлены поля для редактирования Contracting Party (Модели A/B).
- * EN: Menu management. Added fields for Contracting Party (Models A/B).
+ * Version: 2.15.0
+ * RU: Управление меню. Добавлены поля для редактирования текстов попапа Modellwechsel в Content Registry.
+ * EN: Menu management. Added fields for editing Modellwechsel popup texts in Content Registry.
  */
 final class Menu
 {
@@ -215,12 +215,25 @@ final class Menu
         $def_cp_a = "The contracting party is Stay4Fair.com. This property is managed by our professional partner.";
         $def_cp_b = "The contracting party for the accommodation is the respective property owner. Stay4Fair acts as an authorized intermediary.";
 
+        // RU: Тексты для попапа смены модели
+        $def_mod_a_title = "🔵 Modell A (Direkt)";
+        $def_mod_b_title = "🟡 Modell B (Vermittlung)";
+        $def_mod_a_desc  = "<strong>Stay4Fair zahlt die City-Tax</strong>.<br><br>Sie geben nur Ihren Netto-Auszahlungswunsch an. Wir kümmern uns um den Endpreis. <em>(Für die Einkommensteuer bleiben Sie selbst verantwortlich.)</em><br><br><em>Ideal für weniger Bürokratie.</em>";
+        $def_mod_b_desc  = "<strong>Sie zahlen die City-Tax & Steuern selbst</strong>.<br><br>Sie bestimmen den Brutto-Endpreis für den Gast. Stay4Fair berechnet 15% Provision.<br><br><em>Volle Preiskontrolle für den Vermieter.</em>";
+        $def_mod_footer  = "Der Wechsel des Modells wird von unserem Team geprüft. Laufende Buchungen bleiben unberührt.";
+
         $voucher_text = !empty($options['voucher_instructions']) ? $options['voucher_instructions'] : $def_voucher;
         $tax_single   = !empty($options['tax_notice_single']) ? $options['tax_notice_single'] : $def_tax_single;
         $tax_monthly  = !empty($options['tax_notice_monthly']) ? $options['tax_notice_monthly'] : $def_tax_monthly;
         
         $cp_a = !empty($options['contract_party_text_a']) ? $options['contract_party_text_a'] : $def_cp_a;
         $cp_b = !empty($options['contract_party_text_b']) ? $options['contract_party_text_b'] : $def_cp_b;
+
+        $mod_a_title = !empty($options['model_a_compare_title']) ? $options['model_a_compare_title'] : $def_mod_a_title;
+        $mod_b_title = !empty($options['model_b_compare_title']) ? $options['model_b_compare_title'] : $def_mod_b_title;
+        $mod_a_desc  = !empty($options['model_a_compare_desc']) ? $options['model_a_compare_desc'] : $def_mod_a_desc;
+        $mod_b_desc  = !empty($options['model_b_compare_desc']) ? $options['model_b_compare_desc'] : $def_mod_b_desc;
+        $mod_footer  = !empty($options['model_compare_footer']) ? $options['model_compare_footer'] : $def_mod_footer;
 
         ?>
         <div class="wrap stayflow-admin-wrap">
@@ -231,6 +244,32 @@ final class Menu
                 <?php settings_fields('stayflow_content_group'); ?>
                 <div class="sf-settings-grid">
                     
+                    <div class="sf-settings-card">
+                        <h3>🔄 Popup: Modellwechsel | Abschnitt: Titel & Beschreibungen</h3>
+                        <div class="sf-hint" style="margin-bottom: 15px; padding: 10px; background: #f8fafc; border-left: 3px solid #8b5cf6;">Texte für das Pop-up-Fenster "Modell wechseln" im Owner Dashboard.</div>
+                        
+                        <table class="form-table" style="margin-bottom: 20px;">
+                            <tr>
+                                <th scope="row"><label>Titel Modell A</label></th>
+                                <td><input type="text" name="<?php echo $optKey; ?>[model_a_compare_title]" value="<?php echo esc_attr((string)$mod_a_title); ?>" class="large-text"></td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><label>Titel Modell B</label></th>
+                                <td><input type="text" name="<?php echo $optKey; ?>[model_b_compare_title]" value="<?php echo esc_attr((string)$mod_b_title); ?>" class="large-text"></td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><label>Footer Hinweis</label></th>
+                                <td><input type="text" name="<?php echo $optKey; ?>[model_compare_footer]" value="<?php echo esc_attr((string)$mod_footer); ?>" class="large-text"></td>
+                            </tr>
+                        </table>
+
+                        <h4 style="margin: 0 0 10px 0; color: #082567;">Beschreibung Modell A</h4>
+                        <?php wp_editor($mod_a_desc, 'mod_a_desc_editor', ['textarea_name' => $optKey . '[model_a_compare_desc]', 'media_buttons' => false, 'textarea_rows' => 5, 'tinymce' => true]); ?>
+
+                        <h4 style="margin: 20px 0 10px 0; color: #082567;">Beschreibung Modell B</h4>
+                        <?php wp_editor($mod_b_desc, 'mod_b_desc_editor', ['textarea_name' => $optKey . '[model_b_compare_desc]', 'media_buttons' => false, 'textarea_rows' => 5, 'tinymce' => true]); ?>
+                    </div>
+
                     <div class="sf-settings-card">
                         <h3>🤝 Contracting Party: Modell A (Stay4Fair)</h3>
                         <div class="sf-hint" style="margin-bottom: 15px; padding: 10px; background: #f8fafc; border-left: 3px solid #082567;">Dieser Text wird auf der Apartment-Seite im Block "Contracting Party" (bei Stay4Fair/Modell A Apartments) angezeigt.</div>
