@@ -2,13 +2,18 @@
 /**
  * Plugin Name: BSBT – MPHB ↔ WooCommerce Debug
  * Description: Логирует связку MotoPress Hotel Booking с WooCommerce: статусы броней и создание/обновление заказов.
+ * Version: 2.1.0
+ * RU: Внедрен GDPR (DSGVO) контроль: PII маскирование и привязка к WP_DEBUG.
+ * EN: GDPR control implemented: PII masking and WP_DEBUG binding.
  * Author: BS Business Travelling / Stay4Fair.com
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+// RU: Теперь логгер работает ТОЛЬКО если на сервере включен WP_DEBUG (безопасно для продакшена)
+// EN: Logger now works ONLY if WP_DEBUG is enabled on the server (safe for production)
 if ( ! defined( 'BSBT_MPHB_WC_LOG' ) ) {
-	define( 'BSBT_MPHB_WC_LOG', true );
+	define( 'BSBT_MPHB_WC_LOG', defined('WP_DEBUG') ? WP_DEBUG : false );
 }
 
 /**
@@ -24,6 +29,19 @@ function bsbt_mphb_wc_log( $message, $context = array() ) {
 
 	$line = '[BSBT_MPHB_WC] ' . $message . ' | ' . wp_json_encode( $context );
 	error_log( $line );
+}
+
+/**
+ * RU: Вспомогательная функция для маскирования Email (GDPR)
+ * EN: Helper function to mask Email (GDPR)
+ */
+function bsbt_mask_email( $email ) {
+    if ( empty( $email ) || ! is_email( $email ) ) return '***';
+    $parts = explode('@', $email);
+    if ( count($parts) === 2 ) {
+        return substr($parts[0], 0, 2) . '***@' . $parts[1];
+    }
+    return '***';
 }
 
 /**
@@ -75,9 +93,7 @@ function bsbt_mphb_wc_booking_snapshot( $booking_id ) {
 					}
 				}
 			}
-		} catch ( \Throwable $e ) {
-			// ignore
-		}
+		} catch ( \Throwable $e ) {}
 	}
 
 	return array(
@@ -87,7 +103,7 @@ function bsbt_mphb_wc_booking_snapshot( $booking_id ) {
 		'total_price'   => (string) $total,
 		'paid_amount'   => (string) $paid,
 		'balance_due'   => (string) $balance,
-		'guest_email'   => (string) $email,
+		'guest_email'   => bsbt_mask_email( (string) $email ), // RU: Маскирование PII
 		'room_type_ids' => $room_types,
 	);
 }
@@ -95,7 +111,6 @@ function bsbt_mphb_wc_booking_snapshot( $booking_id ) {
 /* ============================================================
  * 1) LOG MPHB STATUS CHANGES (SAFE FOR ALL CALL SIGNATURES)
  * ============================================================ */
-
 add_action(
 	'mphb_booking_status_changed',
 	function ( $arg1, $arg2 = null, $arg3 = null ) {
@@ -134,7 +149,6 @@ add_action(
 /* ============================================================
  * 2) LOG WOOCOMMERCE NEW ORDER
  * ============================================================ */
-
 add_action(
 	'woocommerce_new_order',
 	function ( $order_id ) {
@@ -150,7 +164,7 @@ add_action(
 				'order_id'      => $order_id,
 				'status'        => $order->get_status(),
 				'total'         => $order->get_total(),
-				'billing_email' => $order->get_billing_email(),
+				'billing_email' => bsbt_mask_email( $order->get_billing_email() ), // RU: Маскирование PII
 				'mphb_meta'     => bsbt_mphb_wc_extract_mphb_meta( $order ),
 			)
 		);
@@ -162,7 +176,6 @@ add_action(
 /* ============================================================
  * 3) LOG CHECKOUT META UPDATE
  * ============================================================ */
-
 add_action(
 	'woocommerce_checkout_update_order_meta',
 	function ( $order_id, $data ) {
@@ -178,7 +191,7 @@ add_action(
 				'order_id'      => $order_id,
 				'status'        => $order->get_status(),
 				'total'         => $order->get_total(),
-				'billing_email' => $order->get_billing_email(),
+				'billing_email' => bsbt_mask_email( $order->get_billing_email() ), // RU: Маскирование PII
 				'mphb_meta'     => bsbt_mphb_wc_extract_mphb_meta( $order ),
 			)
 		);
@@ -190,7 +203,6 @@ add_action(
 /* ============================================================
  * 4) LOG STORE API CHECKOUT (Blocks)
  * ============================================================ */
-
 add_action(
 	'woocommerce_store_api_checkout_order_processed',
 	function ( $order ) {
@@ -207,7 +219,7 @@ add_action(
 				'order_id'      => $order->get_id(),
 				'status'        => $order->get_status(),
 				'total'         => $order->get_total(),
-				'billing_email' => $order->get_billing_email(),
+				'billing_email' => bsbt_mask_email( $order->get_billing_email() ), // RU: Маскирование PII
 				'mphb_meta'     => bsbt_mphb_wc_extract_mphb_meta( $order ),
 			)
 		);
@@ -219,7 +231,6 @@ add_action(
 /* ============================================================
  * 5) LOG ORDER STATUS CHANGES
  * ============================================================ */
-
 add_action(
 	'woocommerce_order_status_changed',
 	function ( $order_id, $old_status, $new_status, $order ) {
@@ -236,7 +247,7 @@ add_action(
 				'old_status'    => $old_status,
 				'new_status'    => $new_status,
 				'total'         => $order->get_total(),
-				'billing_email' => $order->get_billing_email(),
+				'billing_email' => bsbt_mask_email( $order->get_billing_email() ), // RU: Маскирование PII
 				'mphb_meta'     => bsbt_mphb_wc_extract_mphb_meta( $order ),
 			)
 		);
