@@ -2,432 +2,241 @@
 
 declare(strict_types=1);
 
-namespace StayFlow\Voucher;
-
-use StayFlow\Booking\CancellationManager;
-use StayFlow\Support\PdfEngine;
+namespace StayFlow\Support;
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
 /**
- * Version: 1.5.0
+ * Version: 1.2.0
  *
- * RU:
- * Security hardening & Refactoring:
- * - Убран remote logo URL из PDF HTML (используется локальный путь из PdfEngine).
- * - Логика рендеринга PDF вынесена в централизованный StayFlow\Support\PdfEngine (DRY).
- * - Добавлена базовая защита директории vouchers (.htaccess + index.html).
- * - Улучшена генерация имени файла.
- * - Сохранен текущий flow PAIDEMAIL / voucher cache.
+ * RU: Централизованная фабрика PDF-движков.
+ * Устраняет SSRF-уязвимость: isRemoteEnabled=false везде.
+ * Логотип всегда передаётся как локальный путь (WP_CONTENT_DIR),
+ * а не как внешний URL — именно поэтому remote не нужен.
+ * * Hardening v1.2.0:
+ * - Встроенный fallback-autoloader для вендоров.
+ * - Передача параметров pageSize и orientation в mPDF.
+ * - Строгая валидация сгенерированного файла (размер > 100 байт).
+ * - Усиленная очистка safeFilename (длина, control chars, force .pdf).
+ * - Добавлены Security Headers (nosniff, sandbox) для stream/inline.
  *
- * EN:
- * Security hardening and refactoring for voucher PDF generation:
- * - Removed remote logo URL (uses local path from PdfEngine).
- * - PDF rendering logic delegated to centralized StayFlow\Support\PdfEngine (DRY).
- * - Added basic vouchers directory protection (.htaccess + index.html).
- * - Improved file naming.
- * - Preserved existing PAIDEMAIL / voucher cache flow.
+ * EN: Centralized PDF engine factory.
+ * Fixes SSRF: isRemoteEnabled=false everywhere.
+ * Logo is always resolved to a local filesystem path
+ * (WP_CONTENT_DIR), not an external URL.
  */
-final class VoucherGenerator
+final class PdfEngine
 {
-    private const BS_EXT_REF_META = '_bs_external_reservation_ref';
+    /**
+     * RU: Относительный путь логотипа внутри wp-content.
+     */
+    private const LOGO_WP_CONTENT_RELATIVE = '/uploads/2025/12/gorizontal-color-4.png';
 
-    // ==========================================
-    // RU: Вспомогательные методы / EN: Helpers
-    // ==========================================
-
-    public static function getVoucherNumber(int $bookingId): string
+    /**
+     * RU: Возвращает абсолютный путь к логотипу на диске.
+     * Если файл не найден или недоступен для чтения — возвращает пустую строку.
+     */
+    public static function logoPath(): string
     {
-        if (function_exists('bsbt_get_display_booking_ref')) {
-            return (string) bsbt_get_display_booking_ref($bookingId);
-        }
-
-        $ext = trim((string) get_post_meta($bookingId, self::BS_EXT_REF_META, true));
-        if ($ext !== '') {
-            return $ext;
-        }
-
-        $candidateKeys = [
-            'bs_external_reservation',
-            'external_reservation_number',
-            'bs_booking_number',
-            'reservation_number',
-        ];
-
-        foreach ($candidateKeys as $key) {
-            $val = trim((string) get_post_meta($bookingId, $key, true));
-            if ($val !== '') {
-                return $val;
-            }
-        }
-
-        $internal = trim((string) get_post_meta($bookingId, 'bs_internal_booking_number', true));
-        if ($internal !== '') {
-            return $internal;
-        }
-
-        return (string) $bookingId;
+        $path = WP_CONTENT_DIR . self::LOGO_WP_CONTENT_RELATIVE;
+        return (is_file($path) && is_readable($path)) ? $path : '';
     }
 
-    // ==========================================
-    // RU: Генерация PDF / EN: PDF Generation
-    // ==========================================
-
-    public static function generatePdfFile(int $bookingId, string $suffix = ''): string
+    /**
+     * RU: Определяет доступный движок (mpdf > dompdf > null) с фоллбэк-загрузкой.
+     */
+    public static function detect(): ?string
     {
-        if ($bookingId <= 0) {
-            return '';
+        if (class_exists('\Mpdf\Mpdf')) {
+            return 'mpdf';
+        }
+        if (class_exists('\Dompdf\Dompdf')) {
+            return 'dompdf';
         }
 
-        $html = self::renderHtml($bookingId);
-        if ($html === '') {
-            return '';
-        }
-
-        $dir = self::getVoucherDir();
-        if ($dir === '') {
-            return '';
-        }
-
-        self::createDirectoryProtectionFiles($dir);
-
-        $file = self::buildVoucherFilePath($dir, $bookingId, $suffix);
-
-        // RU: Сохраняем старую логику кеширования paid email PDF.
-        // EN: Keep legacy PAIDEMAIL cache logic.
-        if ($suffix === 'PAIDEMAIL' && is_file($file) && filesize($file) > 800) {
-            return $file;
-        }
-
-        try {
-            @ini_set('memory_limit', '512M');
-            @ini_set('max_execution_time', '300');
-
-            // RU: Используем наш безопасный централизованный движок
-            // EN: Use our secure centralized engine
-            PdfEngine::save($html, $file);
-
-        } catch (\Throwable $e) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[StayFlow VoucherGenerator Error] ' . $e->getMessage());
-            }
-            return '';
-        }
-
-        return (is_file($file) && filesize($file) > 800) ? $file : '';
+        return self::bootstrapVendors();
     }
 
-    private static function getVoucherDir(): string
+    /**
+     * RU: Рендерит HTML в PDF и возвращает байты.
+     *
+     * @throws \RuntimeException if no PDF engine is available or output is empty.
+     */
+    public static function render(string $html, string $pageSize = 'A4', string $orientation = 'portrait'): string
     {
-        $uploadDir = wp_upload_dir();
-        if (empty($uploadDir['basedir']) || !is_string($uploadDir['basedir'])) {
-            return '';
-        }
+        $engine = self::detect();
+        $bytes  = '';
 
-        $dir = trailingslashit($uploadDir['basedir']) . 'bs-vouchers';
-
-        if (!is_dir($dir) && !wp_mkdir_p($dir)) {
-            return '';
-        }
-
-        return $dir;
-    }
-
-    private static function buildVoucherFilePath(string $dir, int $bookingId, string $suffix = ''): string
-    {
-        $bookingId = absint($bookingId);
-
-        if ($suffix !== '') {
-            $safeSuffix = preg_replace('/[^A-Za-z0-9_\-]/', '', $suffix);
-            if (!is_string($safeSuffix) || $safeSuffix === '') {
-                $safeSuffix = 'FILE';
-            }
-
-            $name = 'Voucher-' . $bookingId . '-' . $safeSuffix . '.pdf';
-            return trailingslashit($dir) . $name;
-        }
-
-        $random = function_exists('wp_generate_password')
-            ? wp_generate_password(10, false, false)
-            : substr(md5((string) wp_rand()), 0, 10);
-
-        $name = sprintf(
-            'Voucher-%d-%s-%s.pdf',
-            $bookingId,
-            wp_date('Ymd-His'),
-            strtolower($random)
-        );
-
-        return trailingslashit($dir) . $name;
-    }
-
-    private static function createDirectoryProtectionFiles(string $dir): void
-    {
-        $indexFile = trailingslashit($dir) . 'index.html';
-        if (!is_file($indexFile)) {
-            @file_put_contents($indexFile, '', LOCK_EX);
-        }
-
-        $htaccessFile = trailingslashit($dir) . '.htaccess';
-        if (!is_file($htaccessFile)) {
-            $rules = <<<HTACCESS
-Options -Indexes
-<FilesMatch "\.(pdf)$">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order allow,deny
-        Deny from all
-    </IfModule>
-</FilesMatch>
-
-HTACCESS;
-            @file_put_contents($htaccessFile, $rules, LOCK_EX);
-        }
-    }
-
-    // ==========================================
-    // RU: Рендеринг HTML / EN: HTML Rendering
-    // ==========================================
-
-    public static function renderHtml(int $bookingId): string
-    {
-        $owner = [
-            'name'     => '',
-            'phone'    => '',
-            'email'    => '',
-            'address'  => '',
-            'doorbell' => '',
-        ];
-
-        $roomTypeId = 0;
-        $booking = null;
-
-        if (function_exists('MPHB')) {
-            try {
-                $booking = \MPHB()->getBookingRepository()->findById($bookingId);
-                if ($booking) {
-                    $reserved = $booking->getReservedRooms();
-                    if (!empty($reserved)) {
-                        $first = reset($reserved);
-                        $roomTypeId = (int) $first->getRoomTypeId();
-
-                        if ($roomTypeId > 0) {
-                            $owner['name']     = trim((string) get_post_meta($roomTypeId, 'owner_name', true));
-                            $owner['phone']    = trim((string) get_post_meta($roomTypeId, 'owner_phone', true));
-                            $owner['email']    = trim((string) get_post_meta($roomTypeId, 'owner_email', true));
-                            $owner['address']  = trim((string) get_post_meta($roomTypeId, 'address', true));
-                            $owner['doorbell'] = trim((string) get_post_meta($roomTypeId, 'doorbell_name', true));
-                        }
-                    }
-                }
-            } catch (\Throwable $e) {
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[StayFlow VoucherGenerator Booking Read Error] ' . $e->getMessage());
-                }
-            }
-        }
-
-        $ownerBlock = '';
-        if ($owner['name'] !== '') {
-            $ownerBlock .= 'Owner: ' . esc_html($owner['name']) . '<br>';
-        }
-        if ($owner['phone'] !== '') {
-            $ownerBlock .= 'Phone: ' . esc_html($owner['phone']) . '<br>';
-        }
-        if ($owner['email'] !== '') {
-            $ownerBlock .= 'Email: ' . esc_html($owner['email']) . '<br>';
-        }
-        if ($owner['address'] !== '') {
-            $ownerBlock .= '<br><strong>Apartment address:</strong><br>' . nl2br(esc_html($owner['address'])) . '<br>';
-        }
-        if ($owner['doorbell'] !== '') {
-            $ownerBlock .= 'Doorbell: ' . esc_html($owner['doorbell']) . '<br>';
-        }
-        if ($ownerBlock === '') {
-            $ownerBlock = 'Details will be provided shortly.';
-        }
-
-        $guestNamesArr = [];
-        $totalGuests   = 0;
-
-        $guestFirst = trim((string) get_post_meta($bookingId, 'mphb_first_name', true));
-        $guestLast  = trim((string) get_post_meta($bookingId, 'mphb_last_name', true));
-        if ($guestFirst !== '' || $guestLast !== '') {
-            $guestNamesArr[] = trim($guestFirst . ' ' . $guestLast);
-        }
-
-        if ($booking) {
-            try {
-                $reserved = $booking->getReservedRooms();
-                foreach ($reserved as $room) {
-                    $totalGuests += (int) $room->getAdults() + (int) $room->getChildren();
-
-                    $gName = trim((string) $room->getGuestName());
-                    if ($gName !== '') {
-                        $guestNamesArr[] = $gName;
-                    }
-                }
-            } catch (\Throwable $e) {
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[StayFlow VoucherGenerator Guest Read Error] ' . $e->getMessage());
-                }
-            }
-        }
-
-        if ($totalGuests <= 0) {
-            $totalGuests = (int) get_post_meta($bookingId, 'mphb_total_guests', true);
-            if ($totalGuests <= 0) {
-                $totalGuests = 1;
-            }
-        }
-
-        $allGuestNamesString = implode(', ', array_unique(array_filter($guestNamesArr))) ?: 'Guest';
-
-        $checkIn  = trim((string) get_post_meta($bookingId, 'mphb_check_in_date', true));
-        $checkOut = trim((string) get_post_meta($bookingId, 'mphb_check_out_date', true));
-
-        $timeIn  = trim((string) get_post_meta($roomTypeId, '_sf_check_in_time', true));
-        $timeOut = trim((string) get_post_meta($roomTypeId, '_sf_check_out_time', true));
-
-        if ($timeIn === '') {
-            $timeIn = '15:00–23:00';
-        }
-        if ($timeOut === '') {
-            $timeOut = '12:00';
-        }
-
-        $policyType = trim((string) get_post_meta($roomTypeId, '_sf_cancellation_policy', true));
-        if ($policyType === '') {
-            $policyType = 'non_refundable';
-        }
-
-        $cancelDays = (int) get_post_meta($roomTypeId, '_sf_cancellation_days', true);
-        $policyReg  = get_option('stayflow_registry_policies', []);
-
-        if ($policyType === 'free_cancellation' && $cancelDays > 0) {
-            $penaltyDays = max(0, $cancelDays - 1);
-            $policyRaw   = is_array($policyReg)
-                ? (string) ($policyReg['free_cancellation'] ?? '<ul><li>Free cancellation up to <strong>{days} days before arrival</strong>.</li></ul>')
-                : '<ul><li>Free cancellation up to <strong>{days} days before arrival</strong>.</li></ul>';
-
-            $policyHtml = str_replace(
-                ['{days}', '{penalty_days}'],
-                [(string) $cancelDays, (string) $penaltyDays],
-                $policyRaw
-            );
+        if ($engine === 'mpdf') {
+            $bytes = self::renderMpdf($html, $pageSize, $orientation);
+        } elseif ($engine === 'dompdf') {
+            $bytes = self::renderDompdf($html, $pageSize, $orientation);
         } else {
-            $policyHtml = is_array($policyReg)
-                ? (string) ($policyReg['non_refundable'] ?? '<p><strong>Non-Refundable</strong></p>')
-                : '<p><strong>Non-Refundable</strong></p>';
+            throw new \RuntimeException('[PdfEngine] No PDF engine available (mpdf or dompdf required).');
         }
 
-        $cancelManager = new CancellationManager();
-        $cancelToken   = $cancelManager->generateToken($bookingId);
-
-        if ($cancelToken === '') {
-            $manageBookingHtml = '<div style="font-size:12px; font-weight:bold; margin-bottom:10px;">Please contact support to manage this booking.</div>';
-        } else {
-            $secureCancelLink = add_query_arg(
-                [
-                    'bid'   => $bookingId,
-                    'token' => $cancelToken,
-                ],
-                site_url('/manage-booking/')
-            );
-
-            $manageBookingHtml = '
-                <div style="font-size:11px; margin-bottom:10px;">Change of plans? Use the secure link below:</div>
-                <a href="' . esc_url($secureCancelLink) . '" class="cancel-btn">Manage / Cancel Booking</a>
-            ';
+        if ($bytes === '') {
+            throw new \RuntimeException('[PdfEngine] Rendered PDF bytes are empty.');
         }
 
-        $contentReg = get_option('stayflow_registry_content', []);
-        $instructionsRaw = is_array($contentReg)
-            ? (string) ($contentReg['voucher_instructions'] ?? 'Please contact your host regarding keys.')
-            : 'Please contact your host regarding keys.';
+        return $bytes;
+    }
 
-        $instructions = nl2br(wp_kses_post($instructionsRaw));
-        $contactLine  = 'WhatsApp: +49 176 24615269 · E-mail: business@stay4fair.com · stay4fair.com';
+    /**
+     * RU: Отдаёт PDF браузеру как вложение (download).
+     */
+    public static function stream(string $html, string $filename, string $pageSize = 'A4', string $orientation = 'portrait'): void
+    {
+        $bytes = self::render($html, $pageSize, $orientation);
+        $safe  = self::safeFilename($filename);
+
+        self::sendHeaders('attachment', $safe, strlen($bytes));
         
-        // RU: Получаем абсолютный путь к логотипу из централизованного PdfEngine
-        // EN: Retrieve absolute logo path from centralized PdfEngine
-        $logoSrc      = PdfEngine::logoPath();
+        echo $bytes;
+        exit;
+    }
 
-        ob_start();
-        ?>
-        <!doctype html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body{font-family:DejaVu Sans, Arial, sans-serif;font-size:12px;color:#111;}
-                .h1{font-size:20px;font-weight:800;margin:0 0 4px;}
-                .box{border:1px solid #ddd;border-radius:6px;padding:10px;margin-top:10px;}
-                .grid{display:table;width:100%;border-collapse:collapse;}
-                .col{display:table-cell;vertical-align:top;}
-                .label{font-weight:700;margin-bottom:5px;display:block;}
-                .cancel-btn{display:inline-block;padding:10px 20px;background-color:#000;color:#fff !important;text-decoration:none;border-radius:4px;font-weight:bold;margin-top:10px;}
-            </style>
-        </head>
-        <body>
-            <div style="display:table;width:100%;margin-bottom:20px;">
-                <div style="display:table-cell;">
-                    <?php if ($logoSrc !== '') : ?>
-                        <img src="<?php echo esc_attr($logoSrc); ?>" style="max-height:50px;">
-                    <?php endif; ?>
-                </div>
-                <div style="display:table-cell;text-align:right;font-size:11px;">Stay4Fair.com<br>business@stay4fair.com</div>
-            </div>
+    /**
+     * RU: Отдаёт PDF браузеру для просмотра inline (без скачивания).
+     */
+    public static function inline(string $html, string $filename, string $pageSize = 'A4', string $orientation = 'portrait'): void
+    {
+        $bytes = self::render($html, $pageSize, $orientation);
+        $safe  = self::safeFilename($filename);
 
-            <div class="h1">Booking Voucher</div>
-            <div style="color:#666;">Voucher No: <?php echo esc_html(self::getVoucherNumber($bookingId)); ?> · ID: <?php echo (int) $bookingId; ?></div>
+        self::sendHeaders('inline', $safe, strlen($bytes));
 
-            <div class="grid">
-                <div class="col" style="width:58%;padding-right:10px;">
-                    <div class="box">
-                        <span class="label">Guest</span>
-                        <?php echo esc_html($allGuestNamesString); ?><br>Total: <?php echo (int) $totalGuests; ?>
-                        <div style="border-top:1px solid #eee;margin:10px 0;"></div>
-                        <span class="label">Stay</span>
-                        Check-in: <?php echo esc_html($checkIn); ?> (from <?php echo esc_html($timeIn); ?>)<br>
-                        Check-out: <?php echo esc_html($checkOut); ?> (until <?php echo esc_html($timeOut); ?>)
-                    </div>
-                </div>
-                <div class="col" style="width:42%;">
-                    <div class="box">
-                        <span class="label">Apartment &amp; Host</span>
-                        <?php echo $ownerBlock; ?>
-                    </div>
-                </div>
-            </div>
+        echo $bytes;
+        exit;
+    }
 
-            <div class="box">
-                <span class="label">Instructions</span>
-                <?php echo $instructions; ?>
-            </div>
+    /**
+     * RU: Сохраняет PDF на диск с жесткой проверкой результата.
+     *
+     * @throws \RuntimeException on render or write failure, or if file is invalid.
+     */
+    public static function save(string $html, string $filePath, string $pageSize = 'A4', string $orientation = 'portrait'): void
+    {
+        $bytes = self::render($html, $pageSize, $orientation);
+        $dir   = dirname($filePath);
 
-            <div class="box">
-                <span class="label">Cancellation Policy Details</span>
-                <?php echo wp_kses_post($policyHtml); ?>
-            </div>
+        if (!is_dir($dir)) {
+            wp_mkdir_p($dir);
+        }
 
-            <div class="box" style="background-color:#f9f9f9; text-align:center; border:1px dashed #000;">
-                <span class="label">Manage your booking / Buchung verwalten</span>
-                <?php echo $manageBookingHtml; ?>
-            </div>
+        $written = file_put_contents($filePath, $bytes, LOCK_EX);
 
-            <div style="text-align:center; margin-top:20px; font-size:10px; color:#999;">
-                <?php echo esc_html($contactLine); ?>
-            </div>
-        </body>
-        </html>
-        <?php
+        if ($written === false || !is_file($filePath) || filesize($filePath) < 100) {
+            // RU: Если файл записался битым - удаляем его
+            if (is_file($filePath)) {
+                @unlink($filePath);
+            }
+            throw new \RuntimeException('[PdfEngine] Failed to write a valid PDF to: ' . $filePath);
+        }
+    }
 
-        $html = (string) ob_get_clean();
-        return trim($html);
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
+    private static function renderMpdf(string $html, string $pageSize, string $orientation): string
+    {
+        $mpdf = new \Mpdf\Mpdf([
+            'format'        => $pageSize,
+            // 'L' for Landscape, 'P' for Portrait
+            'orientation'   => strtoupper(substr($orientation, 0, 1)) === 'L' ? 'L' : 'P',
+            'margin_left'   => 12,
+            'margin_right'  => 12,
+            'margin_top'    => 14,
+            'margin_bottom' => 14,
+        ]);
+        $mpdf->WriteHTML($html);
+        return $mpdf->Output('', \Mpdf\Output\Destination::STRING_RETURN);
+    }
+
+    private static function renderDompdf(string $html, string $pageSize, string $orientation): string
+    {
+        $dompdf = new \Dompdf\Dompdf([
+            'isRemoteEnabled'         => false,  // SSRF FIX
+            'isHtml5ParserEnabled'    => true,
+            'defaultMediaType'        => 'print',
+            'defaultPaperSize'        => $pageSize,
+            'defaultPaperOrientation' => $orientation,
+            'chroot'                  => WP_CONTENT_DIR, // Разрешаем только wp-content
+        ]);
+        $dompdf->loadHtml($html, 'UTF-8');
+        $dompdf->setPaper($pageSize, $orientation);
+        $dompdf->render();
+        return (string) $dompdf->output();
+    }
+
+    private static function safeFilename(string $name): string
+    {
+        // Удаляем path separators, кавычки и control characters
+        $name = preg_replace('/[\x00-\x1F\x7F\/\\\\"\'<>]/', '_', $name) ?? 'document';
+        
+        // Ограничиваем длину (чтобы избежать ошибок файловой системы)
+        $name = mb_substr($name, 0, 200);
+
+        if (trim($name, '_') === '') {
+            $name = 'document';
+        }
+
+        // Жестко гарантируем расширение .pdf
+        if (strtolower(substr($name, -4)) !== '.pdf') {
+            $name .= '.pdf';
+        }
+
+        return $name;
+    }
+
+    private static function sendHeaders(string $disposition, string $filename, int $length): void
+    {
+        if (headers_sent()) {
+            return;
+        }
+
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . $disposition . '; filename="' . $filename . '"');
+        header('Content-Length: ' . $length);
+        header('Cache-Control: private, max-age=0, must-revalidate');
+        
+        // Security hardening
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Security-Policy: sandbox');
+    }
+
+    /**
+     * RU: Пытается найти автолоадер вендоров, если движок еще не загружен.
+     */
+    private static function bootstrapVendors(): ?string
+    {
+        // Ищем mPDF
+        $mpdfCandidates = [
+            WP_PLUGIN_DIR . '/motopress-hotel-booking-pdf-invoices/vendor/autoload.php',
+            WP_PLUGIN_DIR . '/hotel-booking-pdf-invoices/vendor/autoload.php',
+        ];
+
+        foreach ($mpdfCandidates as $autoload) {
+            if (is_file($autoload) && is_readable($autoload)) {
+                require_once $autoload;
+                if (class_exists('\Mpdf\Mpdf')) {
+                    return 'mpdf';
+                }
+            }
+        }
+
+        // Ищем Dompdf
+        $dompdfAutoload = WP_PLUGIN_DIR . '/mphb-invoices/vendors/dompdf/autoload.inc.php';
+        if (is_file($dompdfAutoload) && is_readable($dompdfAutoload)) {
+            require_once $dompdfAutoload;
+            if (class_exists('\Dompdf\Dompdf')) {
+                return 'dompdf';
+            }
+        }
+
+        return null;
     }
 }
