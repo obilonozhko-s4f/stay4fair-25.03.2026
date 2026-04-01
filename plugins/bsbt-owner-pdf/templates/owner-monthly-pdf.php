@@ -1,10 +1,17 @@
 <?php
 declare(strict_types=1);
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 /**
+ * Version: 1.1.0
  * Owner Monthly PDF Template
- * RU: Шаблон месячного отчета PDF (с разделением визуального отображения Модели А и В)
+ * * RU: Шаблон месячного отчета PDF (с разделением визуального отображения Модели А и В)
+ * - v1.1.0: Интеграция с PdfEngine (замена внешнего URL на безопасный локальный путь)
  * EN: Monthly PDF template (with visual separation for Model A and B)
+ * - v1.1.0: PdfEngine integration (replaced remote URL with safe local path)
  *
  * Variables available:
  * @var array $d (from $pdf_data)
@@ -14,7 +21,12 @@ $e = static function ($v) {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 };
 
-$logo = 'https://stay4fair.com/wp-content/uploads/2025/12/gorizontal-color-4.webp';
+// ==========================================
+// RU: Получение логотипа
+// EN: Logo retrieval
+// ==========================================
+// Используем безопасный локальный путь вместо внешнего URL для предотвращения SSRF
+$logo = \StayFlow\Support\PdfEngine::logoPath();
 ?>
 <!doctype html>
 <html lang="de">
@@ -65,7 +77,11 @@ h1 { font-size: 18px; margin: 12px 0 6px 0; color: #082567; border-bottom: 2px s
 
 <table class="header" style="margin-bottom: 15px;">
     <tr>
-        <td class="logo"><img src="<?php echo $e($logo); ?>" alt="Stay4Fair"></td>
+        <td class="logo">
+            <?php if ($logo !== '') : ?>
+                <img src="<?php echo $e($logo); ?>" alt="Stay4Fair">
+            <?php endif; ?>
+        </td>
         <td class="contact">
             <strong>Stay4Fair.com</strong><br>
             Tel / WhatsApp: +49 176 24615269<br>
@@ -96,7 +112,7 @@ h1 { font-size: 18px; margin: 12px 0 6px 0; color: #082567; border-bottom: 2px s
     <thead>
         <tr>
             <th>ID</th>
-            <th>Apartment & Adresse</th>
+            <th>Apartment &amp; Adresse</th>
             <th>Check-in / Check-out</th>
             <th class="text-right">Gäste</th>
             <th class="text-right">Buchungspreis<br><span style="font-weight:normal; font-size:8px;">(Brutto)</span></th>
