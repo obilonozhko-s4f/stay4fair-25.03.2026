@@ -5,22 +5,37 @@ declare(strict_types=1);
 namespace StayFlow\Voucher;
 
 use StayFlow\Booking\CancellationManager;
+use StayFlow\Support\PdfEngine;
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
 /**
- * Version: 1.3.4
- * RU: Если токен пустой — ссылка управления не рендерится. Выводится fallback-текст.
- * EN: If token is empty, manage link is not rendered. Fallback text is displayed.
+ * Version: 1.5.0
+ *
+ * RU:
+ * Security hardening & Refactoring:
+ * - Убран remote logo URL из PDF HTML (используется локальный путь из PdfEngine).
+ * - Логика рендеринга PDF вынесена в централизованный StayFlow\Support\PdfEngine (DRY).
+ * - Добавлена базовая защита директории vouchers (.htaccess + index.html).
+ * - Улучшена генерация имени файла.
+ * - Сохранен текущий flow PAIDEMAIL / voucher cache.
+ *
+ * EN:
+ * Security hardening and refactoring for voucher PDF generation:
+ * - Removed remote logo URL (uses local path from PdfEngine).
+ * - PDF rendering logic delegated to centralized StayFlow\Support\PdfEngine (DRY).
+ * - Added basic vouchers directory protection (.htaccess + index.html).
+ * - Improved file naming.
+ * - Preserved existing PAIDEMAIL / voucher cache flow.
  */
 final class VoucherGenerator
 {
     private const BS_EXT_REF_META = '_bs_external_reservation_ref';
 
     // ==========================================
-    // Helpers
+    // RU: Вспомогательные методы / EN: Helpers
     // ==========================================
 
     public static function getVoucherNumber(int $bookingId): string
@@ -28,108 +43,168 @@ final class VoucherGenerator
         if (function_exists('bsbt_get_display_booking_ref')) {
             return (string) bsbt_get_display_booking_ref($bookingId);
         }
-        
-        $ext = trim((string) get_post_meta($bookingId, self::BS_EXT_REF_META, true));
-        if ($ext !== '') return $ext;
 
-        $candidateKeys = ['bs_external_reservation', 'external_reservation_number', 'bs_booking_number', 'reservation_number'];
+        $ext = trim((string) get_post_meta($bookingId, self::BS_EXT_REF_META, true));
+        if ($ext !== '') {
+            return $ext;
+        }
+
+        $candidateKeys = [
+            'bs_external_reservation',
+            'external_reservation_number',
+            'bs_booking_number',
+            'reservation_number',
+        ];
+
         foreach ($candidateKeys as $key) {
             $val = trim((string) get_post_meta($bookingId, $key, true));
-            if ($val !== '') return $val;
+            if ($val !== '') {
+                return $val;
+            }
         }
 
         $internal = trim((string) get_post_meta($bookingId, 'bs_internal_booking_number', true));
-        if ($internal !== '') return $internal;
+        if ($internal !== '') {
+            return $internal;
+        }
 
         return (string) $bookingId;
     }
 
-    public static function tryLoadPdfEngine(): string
-    {
-        if (class_exists('\Mpdf\Mpdf')) return 'mpdf';
-        if (class_exists('\Dompdf\Dompdf')) return 'dompdf';
-        
-        $mpdfCandidates = [
-            WP_PLUGIN_DIR . '/motopress-hotel-booking-pdf-invoices/vendor/autoload.php', 
-            WP_PLUGIN_DIR . '/hotel-booking-pdf-invoices/vendor/autoload.php'
-        ];
-        
-        foreach ($mpdfCandidates as $autoload) {
-            if (is_file($autoload)) {
-                require_once $autoload;
-                if (class_exists('\Mpdf\Mpdf')) return 'mpdf';
-            }
-        }
-        
-        $dompdfAutoload = WP_PLUGIN_DIR . '/mphb-invoices/vendors/dompdf/autoload.inc.php';
-        if (is_file($dompdfAutoload)) {
-            require_once $dompdfAutoload;
-            if (class_exists('\Dompdf\Dompdf')) return 'dompdf';
-        }
-        
-        return '';
-    }
-
     // ==========================================
-    // PDF Generation
+    // RU: Генерация PDF / EN: PDF Generation
     // ==========================================
 
     public static function generatePdfFile(int $bookingId, string $suffix = ''): string
     {
-        if ($bookingId <= 0) return '';
-        
+        if ($bookingId <= 0) {
+            return '';
+        }
+
         $html = self::renderHtml($bookingId);
-        if (!$html) return '';
+        if ($html === '') {
+            return '';
+        }
 
-        $uploadDir = wp_upload_dir();
-        $dir = trailingslashit($uploadDir['basedir']) . 'bs-vouchers';
-        if (!is_dir($dir)) wp_mkdir_p($dir);
+        $dir = self::getVoucherDir();
+        if ($dir === '') {
+            return '';
+        }
 
-        $suffixStr = $suffix ? '-' . $suffix : '-' . date('Ymd-His');
-        $file = trailingslashit($dir) . 'Voucher-' . $bookingId . $suffixStr . '.pdf';
+        self::createDirectoryProtectionFiles($dir);
 
+        $file = self::buildVoucherFilePath($dir, $bookingId, $suffix);
+
+        // RU: Сохраняем старую логику кеширования paid email PDF.
+        // EN: Keep legacy PAIDEMAIL cache logic.
         if ($suffix === 'PAIDEMAIL' && is_file($file) && filesize($file) > 800) {
             return $file;
         }
 
-        $engine = self::tryLoadPdfEngine();
-        
         try {
             @ini_set('memory_limit', '512M');
             @ini_set('max_execution_time', '300');
-            
-            if ($engine === 'mpdf' && class_exists('\Mpdf\Mpdf')) {
-                $mpdf = new \Mpdf\Mpdf(['format'=>'A4','margin_left'=>12,'margin_right'=>12,'margin_top'=>14,'margin_bottom'=>14]);
-                $mpdf->WriteHTML($html);
-                $mpdf->Output($file, \Mpdf\Output\Destination::FILE);
-            } elseif ($engine === 'dompdf' && class_exists('\Dompdf\Dompdf')) {
-                // TODO: Replace remote logo URL with local filepath (WP_CONTENT_DIR) so we can set isRemoteEnabled to false.
-                $dompdf = new \Dompdf\Dompdf(['isRemoteEnabled'=>true]);
-                $dompdf->loadHtml($html, 'UTF-8');
-                $dompdf->setPaper('A4','portrait');
-                $dompdf->render();
-                file_put_contents($file, $dompdf->output());
-            } else { 
-                return ''; 
-            }
-        } catch (\Throwable $e) { 
+
+            // RU: Используем наш безопасный централизованный движок
+            // EN: Use our secure centralized engine
+            PdfEngine::save($html, $file);
+
+        } catch (\Throwable $e) {
             if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[StayFlow PDF Generator Error] ' . $e->getMessage());
+                error_log('[StayFlow VoucherGenerator Error] ' . $e->getMessage());
             }
-            return ''; 
+            return '';
         }
 
         return (is_file($file) && filesize($file) > 800) ? $file : '';
     }
 
+    private static function getVoucherDir(): string
+    {
+        $uploadDir = wp_upload_dir();
+        if (empty($uploadDir['basedir']) || !is_string($uploadDir['basedir'])) {
+            return '';
+        }
+
+        $dir = trailingslashit($uploadDir['basedir']) . 'bs-vouchers';
+
+        if (!is_dir($dir) && !wp_mkdir_p($dir)) {
+            return '';
+        }
+
+        return $dir;
+    }
+
+    private static function buildVoucherFilePath(string $dir, int $bookingId, string $suffix = ''): string
+    {
+        $bookingId = absint($bookingId);
+
+        if ($suffix !== '') {
+            $safeSuffix = preg_replace('/[^A-Za-z0-9_\-]/', '', $suffix);
+            if (!is_string($safeSuffix) || $safeSuffix === '') {
+                $safeSuffix = 'FILE';
+            }
+
+            $name = 'Voucher-' . $bookingId . '-' . $safeSuffix . '.pdf';
+            return trailingslashit($dir) . $name;
+        }
+
+        $random = function_exists('wp_generate_password')
+            ? wp_generate_password(10, false, false)
+            : substr(md5((string) wp_rand()), 0, 10);
+
+        $name = sprintf(
+            'Voucher-%d-%s-%s.pdf',
+            $bookingId,
+            wp_date('Ymd-His'),
+            strtolower($random)
+        );
+
+        return trailingslashit($dir) . $name;
+    }
+
+    private static function createDirectoryProtectionFiles(string $dir): void
+    {
+        $indexFile = trailingslashit($dir) . 'index.html';
+        if (!is_file($indexFile)) {
+            @file_put_contents($indexFile, '', LOCK_EX);
+        }
+
+        $htaccessFile = trailingslashit($dir) . '.htaccess';
+        if (!is_file($htaccessFile)) {
+            $rules = <<<HTACCESS
+Options -Indexes
+<FilesMatch "\.(pdf)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+HTACCESS;
+            @file_put_contents($htaccessFile, $rules, LOCK_EX);
+        }
+    }
+
     // ==========================================
-    // HTML Rendering
+    // RU: Рендеринг HTML / EN: HTML Rendering
     // ==========================================
 
     public static function renderHtml(int $bookingId): string
     {
-        $owner = ['name'=>'','phone'=>'','email'=>'','address'=>'','doorbell'=>''];
+        $owner = [
+            'name'     => '',
+            'phone'    => '',
+            'email'    => '',
+            'address'  => '',
+            'doorbell' => '',
+        ];
+
         $roomTypeId = 0;
+        $booking = null;
 
         if (function_exists('MPHB')) {
             try {
@@ -139,81 +214,131 @@ final class VoucherGenerator
                     if (!empty($reserved)) {
                         $first = reset($reserved);
                         $roomTypeId = (int) $first->getRoomTypeId();
+
                         if ($roomTypeId > 0) {
-                            $owner['name']     = trim((string)get_post_meta($roomTypeId, 'owner_name', true));
-                            $owner['phone']    = trim((string)get_post_meta($roomTypeId, 'owner_phone', true));
-                            $owner['email']    = trim((string)get_post_meta($roomTypeId, 'owner_email', true));
-                            $owner['address']  = trim((string)get_post_meta($roomTypeId, 'address', true));
-                            $owner['doorbell'] = trim((string)get_post_meta($roomTypeId, 'doorbell_name', true));
+                            $owner['name']     = trim((string) get_post_meta($roomTypeId, 'owner_name', true));
+                            $owner['phone']    = trim((string) get_post_meta($roomTypeId, 'owner_phone', true));
+                            $owner['email']    = trim((string) get_post_meta($roomTypeId, 'owner_email', true));
+                            $owner['address']  = trim((string) get_post_meta($roomTypeId, 'address', true));
+                            $owner['doorbell'] = trim((string) get_post_meta($roomTypeId, 'doorbell_name', true));
                         }
                     }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log('[StayFlow VoucherGenerator Booking Read Error] ' . $e->getMessage());
+                }
+            }
         }
 
         $ownerBlock = '';
-        if ($owner['name'])     $ownerBlock .= 'Owner: ' . esc_html($owner['name']) . '<br>';
-        if ($owner['phone'])    $ownerBlock .= 'Phone: ' . esc_html($owner['phone']) . '<br>';
-        if ($owner['email'])    $ownerBlock .= 'Email: ' . esc_html($owner['email']) . '<br>';
-        if ($owner['address'])  $ownerBlock .= '<br><strong>Apartment address:</strong><br>' . nl2br(esc_html($owner['address'])) . '<br>';
-        if ($owner['doorbell']) $ownerBlock .= 'Doorbell: ' . esc_html($owner['doorbell']) . '<br>';
-        if ($ownerBlock === '') $ownerBlock  = 'Details will be provided shortly.';
+        if ($owner['name'] !== '') {
+            $ownerBlock .= 'Owner: ' . esc_html($owner['name']) . '<br>';
+        }
+        if ($owner['phone'] !== '') {
+            $ownerBlock .= 'Phone: ' . esc_html($owner['phone']) . '<br>';
+        }
+        if ($owner['email'] !== '') {
+            $ownerBlock .= 'Email: ' . esc_html($owner['email']) . '<br>';
+        }
+        if ($owner['address'] !== '') {
+            $ownerBlock .= '<br><strong>Apartment address:</strong><br>' . nl2br(esc_html($owner['address'])) . '<br>';
+        }
+        if ($owner['doorbell'] !== '') {
+            $ownerBlock .= 'Doorbell: ' . esc_html($owner['doorbell']) . '<br>';
+        }
+        if ($ownerBlock === '') {
+            $ownerBlock = 'Details will be provided shortly.';
+        }
 
         $guestNamesArr = [];
-        $totalGuests = 0;
+        $totalGuests   = 0;
 
-        $guestFirst = trim((string)get_post_meta($bookingId,'mphb_first_name',true));
-        $guestLast  = trim((string)get_post_meta($bookingId,'mphb_last_name',true));
-        if ($guestFirst || $guestLast) $guestNamesArr[] = trim($guestFirst . ' ' . $guestLast);
+        $guestFirst = trim((string) get_post_meta($bookingId, 'mphb_first_name', true));
+        $guestLast  = trim((string) get_post_meta($bookingId, 'mphb_last_name', true));
+        if ($guestFirst !== '' || $guestLast !== '') {
+            $guestNamesArr[] = trim($guestFirst . ' ' . $guestLast);
+        }
 
-        if (isset($booking) && $booking) {
+        if ($booking) {
             try {
                 $reserved = $booking->getReservedRooms();
                 foreach ($reserved as $room) {
-                    $totalGuests += (int)$room->getAdults() + (int)$room->getChildren();
-                    $gName = trim((string)$room->getGuestName());
-                    if ($gName !== '') $guestNamesArr[] = $gName;
+                    $totalGuests += (int) $room->getAdults() + (int) $room->getChildren();
+
+                    $gName = trim((string) $room->getGuestName());
+                    if ($gName !== '') {
+                        $guestNamesArr[] = $gName;
+                    }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log('[StayFlow VoucherGenerator Guest Read Error] ' . $e->getMessage());
+                }
+            }
         }
 
         if ($totalGuests <= 0) {
-            $totalGuests = (int)get_post_meta($bookingId, 'mphb_total_guests', true) ?: 1;
+            $totalGuests = (int) get_post_meta($bookingId, 'mphb_total_guests', true);
+            if ($totalGuests <= 0) {
+                $totalGuests = 1;
+            }
         }
 
-        $allGuestNamesString = implode(', ', array_unique($guestNamesArr)) ?: 'Guest';
+        $allGuestNamesString = implode(', ', array_unique(array_filter($guestNamesArr))) ?: 'Guest';
 
-        $checkIn  = trim((string)get_post_meta($bookingId,'mphb_check_in_date',true));
-        $checkOut = trim((string)get_post_meta($bookingId,'mphb_check_out_date',true));
-        $timeIn   = get_post_meta($roomTypeId, '_sf_check_in_time', true) ?: '15:00–23:00';
-        $timeOut  = get_post_meta($roomTypeId, '_sf_check_out_time', true) ?: '12:00';
+        $checkIn  = trim((string) get_post_meta($bookingId, 'mphb_check_in_date', true));
+        $checkOut = trim((string) get_post_meta($bookingId, 'mphb_check_out_date', true));
 
-        $policyType = get_post_meta($roomTypeId, '_sf_cancellation_policy', true) ?: 'non_refundable';
+        $timeIn  = trim((string) get_post_meta($roomTypeId, '_sf_check_in_time', true));
+        $timeOut = trim((string) get_post_meta($roomTypeId, '_sf_check_out_time', true));
+
+        if ($timeIn === '') {
+            $timeIn = '15:00–23:00';
+        }
+        if ($timeOut === '') {
+            $timeOut = '12:00';
+        }
+
+        $policyType = trim((string) get_post_meta($roomTypeId, '_sf_cancellation_policy', true));
+        if ($policyType === '') {
+            $policyType = 'non_refundable';
+        }
+
         $cancelDays = (int) get_post_meta($roomTypeId, '_sf_cancellation_days', true);
-        
-        $policyReg = get_option('stayflow_registry_policies', []);
+        $policyReg  = get_option('stayflow_registry_policies', []);
 
         if ($policyType === 'free_cancellation' && $cancelDays > 0) {
-            $penaltyDays = $cancelDays - 1;
-            $policyRaw = $policyReg['free_cancellation'] ?? "<ul><li>Free cancellation up to <strong>{days} days before arrival</strong>.</li></ul>";
-            $policyHtml = str_replace(['{days}', '{penalty_days}'], [(string)$cancelDays, (string)$penaltyDays], $policyRaw);
+            $penaltyDays = max(0, $cancelDays - 1);
+            $policyRaw   = is_array($policyReg)
+                ? (string) ($policyReg['free_cancellation'] ?? '<ul><li>Free cancellation up to <strong>{days} days before arrival</strong>.</li></ul>')
+                : '<ul><li>Free cancellation up to <strong>{days} days before arrival</strong>.</li></ul>';
+
+            $policyHtml = str_replace(
+                ['{days}', '{penalty_days}'],
+                [(string) $cancelDays, (string) $penaltyDays],
+                $policyRaw
+            );
         } else {
-            $policyHtml = $policyReg['non_refundable'] ?? "<p><strong>Non-Refundable</strong></p>";
+            $policyHtml = is_array($policyReg)
+                ? (string) ($policyReg['non_refundable'] ?? '<p><strong>Non-Refundable</strong></p>')
+                : '<p><strong>Non-Refundable</strong></p>';
         }
 
-        // RU: Получаем токен. Если он пустой, значит у брони нет валидного email.
-        // EN: Fetch token. If empty, the booking lacks a valid email.
         $cancelManager = new CancellationManager();
-        $cancelToken = $cancelManager->generateToken($bookingId);
-        
+        $cancelToken   = $cancelManager->generateToken($bookingId);
+
         if ($cancelToken === '') {
             $manageBookingHtml = '<div style="font-size:12px; font-weight:bold; margin-bottom:10px;">Please contact support to manage this booking.</div>';
         } else {
-            $secureCancelLink = add_query_arg([
-                'bid'   => $bookingId, 
-                'token' => $cancelToken
-            ], site_url('/manage-booking/'));
-            
+            $secureCancelLink = add_query_arg(
+                [
+                    'bid'   => $bookingId,
+                    'token' => $cancelToken,
+                ],
+                site_url('/manage-booking/')
+            );
+
             $manageBookingHtml = '
                 <div style="font-size:11px; margin-bottom:10px;">Change of plans? Use the secure link below:</div>
                 <a href="' . esc_url($secureCancelLink) . '" class="cancel-btn">Manage / Cancel Booking</a>
@@ -221,11 +346,19 @@ final class VoucherGenerator
         }
 
         $contentReg = get_option('stayflow_registry_content', []);
-        $instructions = nl2br(wp_kses_post($contentReg['voucher_instructions'] ?? "Please contact your host regarding keys."));
-        $contactLine = 'WhatsApp: +49 176 24615269 · E-mail: business@stay4fair.com · stay4fair.com';
-        $logoUrl = 'https://stay4fair.com/wp-content/uploads/2025/12/gorizontal-color-4.png';
+        $instructionsRaw = is_array($contentReg)
+            ? (string) ($contentReg['voucher_instructions'] ?? 'Please contact your host regarding keys.')
+            : 'Please contact your host regarding keys.';
 
-        ob_start(); ?>
+        $instructions = nl2br(wp_kses_post($instructionsRaw));
+        $contactLine  = 'WhatsApp: +49 176 24615269 · E-mail: business@stay4fair.com · stay4fair.com';
+        
+        // RU: Получаем абсолютный путь к логотипу из централизованного PdfEngine
+        // EN: Retrieve absolute logo path from centralized PdfEngine
+        $logoSrc      = PdfEngine::logoPath();
+
+        ob_start();
+        ?>
         <!doctype html>
         <html>
         <head>
@@ -242,18 +375,22 @@ final class VoucherGenerator
         </head>
         <body>
             <div style="display:table;width:100%;margin-bottom:20px;">
-                <div style="display:table-cell;"><img src="<?php echo esc_url($logoUrl); ?>" style="max-height:50px;"></div>
+                <div style="display:table-cell;">
+                    <?php if ($logoSrc !== '') : ?>
+                        <img src="<?php echo esc_attr($logoSrc); ?>" style="max-height:50px;">
+                    <?php endif; ?>
+                </div>
                 <div style="display:table-cell;text-align:right;font-size:11px;">Stay4Fair.com<br>business@stay4fair.com</div>
             </div>
 
             <div class="h1">Booking Voucher</div>
-            <div style="color:#666;">Voucher No: <?php echo esc_html(self::getVoucherNumber($bookingId)); ?> · ID: <?php echo (int)$bookingId; ?></div>
+            <div style="color:#666;">Voucher No: <?php echo esc_html(self::getVoucherNumber($bookingId)); ?> · ID: <?php echo (int) $bookingId; ?></div>
 
             <div class="grid">
                 <div class="col" style="width:58%;padding-right:10px;">
                     <div class="box">
                         <span class="label">Guest</span>
-                        <?php echo esc_html($allGuestNamesString); ?><br>Total: <?php echo (int)$totalGuests; ?>
+                        <?php echo esc_html($allGuestNamesString); ?><br>Total: <?php echo (int) $totalGuests; ?>
                         <div style="border-top:1px solid #eee;margin:10px 0;"></div>
                         <span class="label">Stay</span>
                         Check-in: <?php echo esc_html($checkIn); ?> (from <?php echo esc_html($timeIn); ?>)<br>
@@ -262,7 +399,7 @@ final class VoucherGenerator
                 </div>
                 <div class="col" style="width:42%;">
                     <div class="box">
-                        <span class="label">Apartment & Host</span>
+                        <span class="label">Apartment &amp; Host</span>
                         <?php echo $ownerBlock; ?>
                     </div>
                 </div>
@@ -278,7 +415,7 @@ final class VoucherGenerator
                 <?php echo wp_kses_post($policyHtml); ?>
             </div>
 
-            <div class="box" style="background-color: #f9f9f9; text-align: center; border: 1px dashed #000;">
+            <div class="box" style="background-color:#f9f9f9; text-align:center; border:1px dashed #000;">
                 <span class="label">Manage your booking / Buchung verwalten</span>
                 <?php echo $manageBookingHtml; ?>
             </div>
@@ -289,6 +426,8 @@ final class VoucherGenerator
         </body>
         </html>
         <?php
-        return ob_get_clean();
+
+        $html = (string) ob_get_clean();
+        return trim($html);
     }
 }
