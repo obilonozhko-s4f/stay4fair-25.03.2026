@@ -1,9 +1,9 @@
 <?php
 /**
  * File: /stay4fair.com/wp-content/plugins/stayflow-core/src/Core/Kernel.php
- * Version: 1.1.7
- * RU: Главное ядро инициализации плагина. Добавлен SupportProvider и FontLoader (GDPR).
- * EN: Main initialization kernel. SupportProvider and FontLoader (GDPR) added.
+ * Version: 1.1.8
+ * RU: Главное ядро инициализации плагина. Добавлен GdprCompliance для DSGVO.
+ * EN: Main initialization kernel. Added GdprCompliance for DSGVO.
  */
 
 declare(strict_types=1);
@@ -112,6 +112,14 @@ final class Kernel
         // ==========================================
         if (class_exists('\StayFlow\Media\FontLoader')) {
             \StayFlow\Media\FontLoader::init();
+        }
+
+        // ==========================================
+        // RU: ЭКСПОРТ И УДАЛЕНИЕ ДАННЫХ (GDPR / DSGVO)
+        // EN: DATA EXPORT AND ERASURE (GDPR / DSGVO)
+        // ==========================================
+        if (class_exists('\StayFlow\Compliance\GdprCompliance')) {
+            (new \StayFlow\Compliance\GdprCompliance())->register();
         }
     }
 }
