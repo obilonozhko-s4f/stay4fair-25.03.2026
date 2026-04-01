@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 /**
  * Plugin Name: BSBT – Owner PDF
- * Description: Owner booking confirmation + payout summary PDF. (V2.5.0 - Nullmeldung Integrated)
- * Version: 2.5.0
+ * Description: Owner booking confirmation + payout summary PDF. (V2.5.1 - Nullmeldung + Secure PdfEngine)
+ * Version: 2.5.1
  * Author: BS Business Travelling / Stay4Fair.com
  */
 
@@ -236,27 +236,19 @@ final class BSBT_Owner_PDF {
             'owner_iban'     => $iban,
         ];
 
-        if (!class_exists('\StayFlow\Voucher\VoucherGenerator')) wp_die('StayFlow Core required.');
+        // RU: Проверяем наличие нашего безопасного движка
+        if (!class_exists('\StayFlow\Support\PdfEngine')) {
+            wp_die('StayFlow PdfEngine is required. Please ensure stayflow-core is active.');
+        }
 
         ob_start();
         $d = $pdf_data;
         include plugin_dir_path(__FILE__) . 'templates/owner-monthly-pdf.php';
         $html = ob_get_clean();
 
-        $engine = \StayFlow\Voucher\VoucherGenerator::tryLoadPdfEngine();
-
+        // RU: Безопасный рендеринг через PdfEngine
         try {
-            if ($engine === 'mpdf') {
-                $mpdf = new \Mpdf\Mpdf(['format' => 'A4-L']); 
-                $mpdf->WriteHTML($html);
-                $mpdf->Output($filename_base.'.pdf', 'D'); 
-            } else {
-                $dom = new \Dompdf\Dompdf(['isRemoteEnabled' => true]);
-                $dom->setPaper('A4', 'landscape');
-                $dom->loadHtml($html, 'UTF-8');
-                $dom->render();
-                $dom->stream($filename_base.'.pdf', ["Attachment" => true]);
-            }
+            \StayFlow\Support\PdfEngine::stream($html, $filename_base.'.pdf', 'A4', 'landscape');
             exit;
         } catch (\Throwable $e) {
             wp_die('PDF Error: ' . $e->getMessage());
@@ -279,7 +271,10 @@ final class BSBT_Owner_PDF {
     // EN: Single PDF generation
 
     private static function generate_pdf(int $bid, array $ctx): array {
-        if (!class_exists('\StayFlow\Voucher\VoucherGenerator')) return ['ok'=>false, 'message'=>'StayFlow PDF engine missing'];
+        if (!class_exists('\StayFlow\Support\PdfEngine')) {
+            return ['ok'=>false, 'message'=>'StayFlow PdfEngine missing'];
+        }
+        
         $data = self::collect_single_data($bid);
         if (empty($data['ok'])) return ['ok'=>false, 'message'=>'Collect data failed'];
 
@@ -289,19 +284,13 @@ final class BSBT_Owner_PDF {
         $path = $dir . 'Owner_PDF_' . $bid . '.pdf';
 
         try {
-            $engine = \StayFlow\Voucher\VoucherGenerator::tryLoadPdfEngine();
-            ob_start(); $d = $data['data']; include plugin_dir_path(__FILE__) . 'templates/owner-pdf.php'; $html = ob_get_clean();
+            ob_start(); 
+            $d = $data['data']; 
+            include plugin_dir_path(__FILE__) . 'templates/owner-pdf.php'; 
+            $html = ob_get_clean();
 
-            if ($engine === 'mpdf') {
-                $mpdf = new \Mpdf\Mpdf(['format' => 'A4']);
-                $mpdf->WriteHTML($html);
-                $mpdf->Output($path, 'F');
-            } else {
-                $dom = new \Dompdf\Dompdf(['isRemoteEnabled' => true]);
-                $dom->loadHtml($html, 'UTF-8');
-                $dom->render();
-                file_put_contents($path, $dom->output());
-            }
+            // RU: Безопасное сохранение через PdfEngine
+            \StayFlow\Support\PdfEngine::save($html, $path);
 
             self::log($bid, ['path'=>$path, 'generated_at'=>current_time('mysql'), 'trigger'=>$ctx['trigger']??'ui']);
             return ['ok'=>true, 'path'=>$path];
